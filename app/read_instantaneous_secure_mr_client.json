@@ -1,0 +1,35 @@
+{
+  "connection": {
+    "baud_rate": 9600,
+    "client_address": 17,
+    "server_address": 1,
+    "security": "low",
+    "password": "abcde12345",
+    "system_title": "4d52436c69656e74",
+    "authentication_key": "000102030405060708090a0b0c0d0e0f",
+    "encryption_key": "000102030405060708090a0b0c0d0e0f",
+    "invocation_counter_obis": "0.0.43.1.1.255",
+    "interface": "HDLC",
+    "ciphering": true
+  },
+  "default_retry": {
+    "max_attempts": 3,
+    "delay_ms": 2000
+  },
+  "operations": [
+    {
+      "name": "Instantaneous Voltage",
+      "type": "get",
+      "obis": "1.0.32.7.0.255",
+      "class_id": 3,
+      "attribute": 2
+    },
+    {
+      "name": "Instantaneous Current",
+      "type": "get",
+      "obis": "1.0.31.7.0.255",
+      "class_id": 3,
+      "attribute": 2
+    }
+  ]
+}

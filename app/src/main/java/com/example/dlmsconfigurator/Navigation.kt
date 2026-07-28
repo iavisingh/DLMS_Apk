@@ -1,0 +1,122 @@
+package com.example.dlmsconfigurator
+
+import androidx.compose.runtime.Composable
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.ui.NavDisplay
+import com.example.dlmsconfigurator.core.data.DataRepository
+
+@Composable
+fun MainNavigation(repository: DataRepository) {
+    val backStack = rememberNavBackStack(Home)
+
+    NavDisplay(
+        backStack = backStack,
+        onBack = { backStack.removeLastOrNull() },
+        entryProvider = entryProvider {
+            entry<Home> {
+                DashboardScreen(
+                    repository = repository,
+                    onExecute = { stagedFileId ->
+                        backStack.add(UsbConnect(stagedFileId = stagedFileId))
+                    },
+                    onSetup = { stagedFileId ->
+                        backStack.add(SessionSetup(stagedFileId = stagedFileId))
+                    },
+                    onViewHistoryDetail = { sessionId ->
+                        backStack.add(SessionDetail(sessionId = sessionId))
+                    }
+                )
+            }
+            entry<SessionSetup> { key ->
+                SessionSetupScreen(
+                    stagedFileId = key.stagedFileId,
+                    repository = repository,
+                    onConfirm = { baud, client, server, sec, pwd, logging, ciphering, systemTitle, authKey, encKey, counterObis ->
+                        backStack.add(
+                            UsbConnect(
+                                stagedFileId = key.stagedFileId,
+                                overrideBaud = baud,
+                                overrideClient = client,
+                                overrideServer = server,
+                                overrideSecurity = sec,
+                                overridePassword = pwd,
+                                overrideDetailed = logging,
+                                overrideSystemTitle = systemTitle,
+                                overrideAuthKey = authKey,
+                                overrideEncKey = encKey,
+                                overrideCounterObis = counterObis,
+                                overrideCiphering = ciphering
+                            )
+                        )
+                    },
+                    onCancel = {
+                        backStack.removeLastOrNull()
+                    }
+                )
+            }
+            entry<UsbConnect> { key ->
+                UsbConnectScreen(
+                    params = key,
+                    repository = repository,
+                    onConnected = { sessionId ->
+                        backStack.add(Execution(sessionId = sessionId, stagedFileId = key.stagedFileId))
+                    },
+                    onBack = {
+                        backStack.removeLastOrNull()
+                    }
+                )
+            }
+            entry<Execution> { key ->
+                ExecutionScreen(
+                    sessionId = key.sessionId,
+                    stagedFileId = key.stagedFileId,
+                    repository = repository,
+                    onFinished = {
+                        backStack.add(ResultSummary(sessionId = key.sessionId))
+                    },
+                    onAborted = {
+                        backStack.add(ResultSummary(sessionId = key.sessionId))
+                    }
+                )
+            }
+            entry<ResultSummary> { key ->
+                ResultSummaryScreen(
+                    sessionId = key.sessionId,
+                    repository = repository,
+                    onViewDetails = {
+                        backStack.add(SessionDetail(sessionId = key.sessionId))
+                    },
+                    onDone = {
+                        // Return to Home by clearing backstack
+                        backStack.removeLastOrNull() // Remove ResultSummary
+                        backStack.removeLastOrNull() // Remove Execution
+                        backStack.removeLastOrNull() // Remove UsbConnect
+                        backStack.removeLastOrNull() // Remove SessionSetup (if we came from it)
+                    }
+                )
+            }
+            entry<SessionDetail> { key ->
+                SessionDetailScreen(
+                    sessionId = key.sessionId,
+                    repository = repository,
+                    onOperationSelected = { opId ->
+                        backStack.add(OperationDetail(operationId = opId))
+                    },
+                    onBack = {
+                        backStack.removeLastOrNull()
+                    }
+                )
+            }
+            entry<OperationDetail> { key ->
+                OperationDetailScreen(
+                    operationId = key.operationId,
+                    repository = repository,
+                    onBack = {
+                        backStack.removeLastOrNull()
+                    }
+                )
+            }
+        }
+    )
+}
