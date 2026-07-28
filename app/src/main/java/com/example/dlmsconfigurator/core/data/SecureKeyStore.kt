@@ -1,6 +1,7 @@
 package com.example.dlmsconfigurator.core.data
 
 import android.content.Context
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.security.SecureRandom
@@ -10,13 +11,30 @@ class SecureKeyStore(context: Context) {
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
 
-    private val sharedPrefs = EncryptedSharedPreferences.create(
+    private val sharedPrefs = try {
+        createSharedPrefs(context)
+    } catch (e: Exception) {
+        Log.e("SecureKeyStore", "Critical security error, resetting secure preferences", e)
+        resetSecurePrefs(context)
+        createSharedPrefs(context)
+    }
+
+    private fun createSharedPrefs(context: Context) = EncryptedSharedPreferences.create(
         context,
         "secure_prefs",
         masterKeySpec,
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
+
+    private fun resetSecurePrefs(context: Context) {
+        try {
+            // Delete the preferences file
+            context.deleteSharedPreferences("secure_prefs")
+            // Delete the Tink keyset file used by EncryptedSharedPreferences
+            context.deleteFile("__androidx_security_crypto_encryption_pref_keyset__")
+        } catch (ignored: Exception) {}
+    }
 
     fun getDatabasePassphrase(): String {
         var passphrase = sharedPrefs.getString("db_passphrase", null)

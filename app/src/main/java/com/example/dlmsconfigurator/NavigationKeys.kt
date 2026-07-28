@@ -23,7 +23,8 @@ import kotlinx.serialization.Serializable
     val overrideAuthKey: String? = null,
     val overrideEncKey: String? = null,
     val overrideCounterObis: String? = null,
-    val overrideCiphering: Boolean? = null
+    val overrideCiphering: Boolean? = null,
+    val overrideUseInvocationCounter: Boolean? = null
 ) : NavKey
 
 @Serializable data class Execution(

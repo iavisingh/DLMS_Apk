@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -138,6 +139,16 @@ fun ExecutionScreen(
                         }
                         if (op.obis == "0.0.96.1.0.255" && !decodedVal.isNullOrBlank()) {
                             discoveredSerial = decodedVal
+                        }
+                        if (!decodedVal.isNullOrBlank()) {
+                            val formattedWriteVal = decodedVal!!
+                                .lines()
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() }
+                                .joinToString(", ")
+                            withContext(Dispatchers.Main) {
+                                writeValues[index] = formattedWriteVal
+                            }
                         }
                     }
                     true
@@ -330,7 +341,8 @@ fun InteractiveOperationRow(
                     value = writeValue,
                     onValueChange = onValueChange,
                     label = { Text("Value to Write", fontSize = 12.sp) },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    maxLines = 4,
                     shape = RoundedCornerShape(8.dp),
                     colors = TextFieldDefaults.colors(
                         focusedTextColor = Color.White,

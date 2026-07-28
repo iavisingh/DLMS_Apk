@@ -32,7 +32,7 @@ fun MainNavigation(repository: DataRepository) {
                 SessionSetupScreen(
                     stagedFileId = key.stagedFileId,
                     repository = repository,
-                    onConfirm = { baud, client, server, sec, pwd, logging, ciphering, systemTitle, authKey, encKey, counterObis ->
+                    onConfirm = { baud, client, server, sec, pwd, logging, ciphering, systemTitle, authKey, encKey, counterObis, useInvocationCounter ->
                         backStack.add(
                             UsbConnect(
                                 stagedFileId = key.stagedFileId,
@@ -46,7 +46,8 @@ fun MainNavigation(repository: DataRepository) {
                                 overrideAuthKey = authKey,
                                 overrideEncKey = encKey,
                                 overrideCounterObis = counterObis,
-                                overrideCiphering = ciphering
+                                overrideCiphering = ciphering,
+                                overrideUseInvocationCounter = useInvocationCounter
                             )
                         )
                     },
@@ -76,7 +77,7 @@ fun MainNavigation(repository: DataRepository) {
                         backStack.add(ResultSummary(sessionId = key.sessionId))
                     },
                     onAborted = {
-                        backStack.add(ResultSummary(sessionId = key.sessionId))
+                        backStack.removeLastOrNull()
                     }
                 )
             }

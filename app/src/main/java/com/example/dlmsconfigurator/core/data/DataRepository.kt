@@ -181,23 +181,24 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
     override fun resetToDefaultTemplates() {
         val defaultTemplates = listOf(
             createTemplate(
-                name = "Default Secure Profile (LnG)",
+                name = "Default Secure Profile (Genus)",
                 jsonContent = """
                     {
                       "connection": {
-                        "name": "LnG",
+                        "name": "Genus",
                         "interface": "HDLC",
                         "authentication": "US",
                         "logical_name_referencing": 1,
                         "client_address": 48,
                         "server_address": 1,
-                        "password": "000102030405060708090A0B0C0D0E0F",
+                        "password": "41654D6C486C53756761506C30316162",
                         "security_suite": "Suite0",
                         "security": "AuthenticationEncryption",
                         "system_title": "4553594130303030",
-                        "block_cipher_key": "000102030405060708090A0B0C0D0E0F",
-                        "authentication_key": "000102030405060708090A0B0C0D0E0F",
+                        "block_cipher_key": "41654D6C456B416B6761506C30316162",
+                        "authentication_key": "41654D6C456B416B6761506C30316162",
                         "invocation_counter_ln": "0.0.43.1.3.255",
+                        "use_invocation_counter": 0,
                         "ciphering": true
                       },
                       "operations": [
@@ -211,17 +212,17 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
                           "default_value": "2026-07-27T12:00:00"
                         },
                         {
-                          "name": "Manufacturer Specific",
+                          "name": "firmware version",
                           "type": "get",
-                          "obis": "0.0.96.128.8.255",
+                          "obis": "1.0.0.2.0.255",
                           "class_id": 1,
                           "attribute": 2,
                           "permission": "read"
                         },
                         {
-                          "name": "Device ID",
+                          "name": "Meter Serial Number",
                           "type": "get",
-                          "obis": "0.0.96.1.2.255",
+                          "obis": "0.0.96.1.0.255",
                           "class_id": 1,
                           "attribute": 2,
                           "permission": "read"
@@ -243,13 +244,13 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
                           "permission": "read-write"
                         },
                         {
-                          "name": "Billing Date schedule",
+                          "name": "Push Action schedule",
                           "type": "get",
-                          "obis": "0.0.15.0.0.255",
+                          "obis": "0.0.15.0.4.255",
                           "class_id": 22,
                           "attribute": 4,
                           "permission": "read-write",
-                          "default_value": "01-*-* 00:00:*"
+                          "default_value": "*-*-* *:30:00"
                         }
                       ]
                     }

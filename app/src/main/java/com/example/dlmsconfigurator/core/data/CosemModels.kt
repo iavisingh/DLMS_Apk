@@ -18,7 +18,7 @@ data class ConnectionParams(
     @SerialName("encryption_key") val encryptionKey: String? = null,
     @SerialName("invocation_counter_obis") val invocationCounterObis: String? = null,
     @SerialName("invocation_counter_ln") val invocationCounterLN: String? = null,
-    @SerialName("ciphering") val ciphering: Boolean = false,
+    @SerialName("ciphering") val ciphering: Boolean = true,
     @SerialName("name") val name: String? = null,
     
     // Genus/LnG specific fields
@@ -34,8 +34,11 @@ data class ConnectionParams(
     @SerialName("push_serverv6_ip") val pushServerV6Ip: String? = null,
     @SerialName("push_serverv4_ip") val pushServerV4Ip: String? = null,
     @SerialName("push_serverv6_port") val pushServerV6Port: Int? = null,
-    @SerialName("push_serverv4_port") val pushServerV4Port: Int? = null
-)
+    @SerialName("push_serverv4_port") val pushServerV4Port: Int? = null,
+    @SerialName("use_invocation_counter") val useInvocationCounter: Int? = 1
+) {
+    val isUseInvocationCounter: Boolean get() = (useInvocationCounter ?: 1) != 0
+}
 
 @Serializable
 data class RetryParams(

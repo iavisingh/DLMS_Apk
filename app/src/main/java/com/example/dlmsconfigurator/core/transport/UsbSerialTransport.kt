@@ -86,4 +86,15 @@ class UsbSerialTransport(
         val port = usbPort ?: throw IOException("Port not open")
         return port.read(buffer, timeoutMs)
     }
+
+    override fun flush() {
+        val port = usbPort ?: return
+        try {
+            val buffer = ByteArray(1024)
+            var read: Int
+            do {
+                read = port.read(buffer, 50)
+            } while (read > 0)
+        } catch (ignored: Exception) {}
+    }
 }

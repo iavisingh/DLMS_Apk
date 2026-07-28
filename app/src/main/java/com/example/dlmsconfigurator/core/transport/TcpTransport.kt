@@ -64,4 +64,15 @@ class TcpTransport(
         }
         return count
     }
+
+    override fun flush() {
+        val stream = inputStream ?: return
+        try {
+            val available = stream.available()
+            if (available > 0) {
+                val skipBuffer = ByteArray(available)
+                stream.read(skipBuffer)
+            }
+        } catch (ignored: Exception) {}
+    }
 }

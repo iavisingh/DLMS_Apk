@@ -6,4 +6,5 @@ interface DlmsTransport {
     fun isOpen(): Boolean
     fun write(data: ByteArray)
     fun read(buffer: ByteArray, timeoutMs: Int): Int
+    fun flush()
 }

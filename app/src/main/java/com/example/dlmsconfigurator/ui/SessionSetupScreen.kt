@@ -61,7 +61,8 @@ fun SessionSetupScreen(
         systemTitle: String?,
         authKey: String?,
         encKey: String?,
-        counterObis: String?
+        counterObis: String?,
+        useInvocationCounter: Boolean?
     ) -> Unit,
     onCancel: () -> Unit,
     repository: DataRepository
@@ -78,7 +79,8 @@ fun SessionSetupScreen(
     var password by remember { mutableStateOf(connection?.password ?: "") }
     var detailedLogging by remember { mutableStateOf(repository.getDefaultLoggingLevel()) }
 
-    var ciphering by remember { mutableStateOf(connection?.ciphering ?: false) }
+    var ciphering by remember { mutableStateOf(connection?.ciphering ?: true) }
+    var useInvocationCounter by remember { mutableStateOf(connection?.isUseInvocationCounter ?: true) }
     var systemTitle by remember { mutableStateOf(connection?.systemTitle ?: "") }
     var authenticationKey by remember { mutableStateOf(connection?.authenticationKey ?: "") }
     var encryptionKey by remember { mutableStateOf(connection?.blockCipherKey ?: connection?.encryptionKey ?: "") }
@@ -247,13 +249,12 @@ fun SessionSetupScreen(
             if (security.lowercase() != "none") {
                 Spacer(modifier = Modifier.height(16.dp))
 
-                var showPassword by remember { mutableStateOf(false) }
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Association Password") },
-                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    label = { Text("Association Password (Hex/Text)") },
+                    visualTransformation = VisualTransformation.None,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = TextFieldDefaults.colors(
@@ -365,6 +366,30 @@ fun SessionSetupScreen(
                         unfocusedLabelColor = Color.Gray
                     )
                 )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1E1E2F))
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Use Invocation Counter", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Sync counter via Public Client before association (turn off for direct US connection)", color = Color.Gray, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = useInvocationCounter,
+                        onCheckedChange = { useInvocationCounter = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF007AFF)
+                        )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -429,7 +454,8 @@ fun SessionSetupScreen(
                             sysTitle,
                             authKey,
                             encKey,
-                            counterObis
+                            counterObis,
+                            useInvocationCounter
                         )
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007AFF)),

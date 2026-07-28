@@ -124,56 +124,61 @@ fun UsbConnectScreen(
 
         scope.launch {
             var attempt = 1
-            val maxAttempts = 2
+            val maxAttempts = 3
             var success = false
+            var currentEngine: DlmsEngine? = null
             
             while (attempt <= maxAttempts && !success) {
                 status = if (attempt > 1) "Retrying connection (Attempt $attempt)..." else "Connecting..."
                 
                 try {
-                    // Increased timeout for multi-session association (Public Client pre-read + US association)
-                    withTimeout(45000) {
-                        val activeTransport = if (isSimulator) {
-                            TcpTransport(simHost, simPort.toIntOrNull() ?: 4059)
-                        } else {
-                            transport
-                        }
-                        
-                        // Force a reset of the transport/meter state for retries
-                        if (attempt > 1) {
-                            withContext(Dispatchers.IO) {
-                                activeTransport.close()
-                                delay(500)
-                            }
-                        }
-
-                        val activeConnection = connection.copy(
-                            baudRate = targetBaud,
-                            clientAddress = params.overrideClient ?: connection.clientAddress,
-                            serverAddress = params.overrideServer ?: connection.serverAddress,
-                            security = params.overrideSecurity ?: connection.security,
-                            password = params.overridePassword ?: connection.password,
-                            systemTitle = params.overrideSystemTitle ?: connection.systemTitle,
-                            authenticationKey = params.overrideAuthKey ?: connection.authenticationKey,
-                            encryptionKey = params.overrideEncKey ?: connection.encryptionKey,
-                            blockCipherKey = params.overrideEncKey ?: connection.blockCipherKey,
-                            invocationCounterObis = params.overrideCounterObis ?: connection.invocationCounterObis,
-                            ciphering = params.overrideCiphering ?: connection.ciphering
-                        )
-
-                        withContext(Dispatchers.IO) {
-                            activeTransport.open()
-                            val engine = DlmsEngine(activeConnection, activeTransport)
-                            engine.associate()
-                            
-                            DlmsSessionHolder.activeTransport = activeTransport
-                            DlmsSessionHolder.activeEngine = engine
-                            DlmsSessionHolder.activeConnection = activeConnection
-                        }
-                        
-                        success = true
+                    val activeTransport = if (isSimulator) {
+                        TcpTransport(simHost, simPort.toIntOrNull() ?: 4059)
+                    } else {
+                        transport
                     }
+                    
+                    // Force a reset of the transport/meter state for retries
+                    if (attempt > 1) {
+                        withContext(Dispatchers.IO) {
+                            currentEngine?.disconnect()
+                            delay(200) // Extra wait between retries
+                            activeTransport.close()
+                            delay(500)
+                        }
+                    }
+
+                    val activeConnection = connection.copy(
+                        baudRate = targetBaud,
+                        clientAddress = params.overrideClient ?: connection.clientAddress,
+                        serverAddress = params.overrideServer ?: connection.serverAddress,
+                        security = params.overrideSecurity ?: connection.security,
+                        password = params.overridePassword ?: connection.password,
+                        systemTitle = params.overrideSystemTitle ?: connection.systemTitle,
+                        authenticationKey = params.overrideAuthKey ?: connection.authenticationKey,
+                        encryptionKey = params.overrideEncKey ?: connection.encryptionKey,
+                        blockCipherKey = params.overrideEncKey ?: connection.blockCipherKey,
+                        invocationCounterObis = params.overrideCounterObis ?: connection.invocationCounterObis,
+                        ciphering = params.overrideCiphering ?: connection.ciphering,
+                        useInvocationCounter = if (params.overrideUseInvocationCounter != null) (if (params.overrideUseInvocationCounter) 1 else 0) else connection.useInvocationCounter
+                    )
+
+                    withContext(Dispatchers.IO) {
+                        activeTransport.open()
+                        val engine = DlmsEngine(activeConnection, activeTransport)
+                        currentEngine = engine
+                        engine.associate()
+                        
+                        DlmsSessionHolder.activeTransport = activeTransport
+                        DlmsSessionHolder.activeEngine = engine
+                        DlmsSessionHolder.activeConnection = activeConnection
+                    }
+                    
+                    success = true
                 } catch (e: Exception) {
+                    withContext(Dispatchers.IO) {
+                        try { currentEngine?.disconnect() } catch (ignored: Exception) {}
+                    }
                     attempt++
                     if (attempt > maxAttempts) {
                         status = "Connection failed after $maxAttempts attempts: ${e.message}"
@@ -197,7 +202,8 @@ fun UsbConnectScreen(
                                  params.overrideServer != null || params.overrideSecurity != null || 
                                  params.overridePassword != null || params.overrideSystemTitle != null || 
                                  params.overrideAuthKey != null || params.overrideEncKey != null || 
-                                 params.overrideCounterObis != null || params.overrideCiphering != null
+                                 params.overrideCounterObis != null || params.overrideCiphering != null ||
+                                 params.overrideUseInvocationCounter != null
                 
                 val detailedLogging = params.overrideDetailed ?: repository.getDefaultLoggingLevel()
 
