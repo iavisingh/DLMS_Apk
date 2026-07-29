@@ -5,6 +5,13 @@ import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver
+import com.hoho.android.usbserial.driver.Ch34xSerialDriver
+import com.hoho.android.usbserial.driver.Cp21xxSerialDriver
+import com.hoho.android.usbserial.driver.FtdiSerialDriver
+import com.hoho.android.usbserial.driver.ProbeTable
+import com.hoho.android.usbserial.driver.ProlificSerialDriver
+import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.io.IOException
@@ -17,9 +24,33 @@ class UsbSerialTransport(
     private var usbPort: UsbSerialPort? = null
     private var usbConnection: UsbDeviceConnection? = null
 
+    private fun getDrivers(): List<UsbSerialDriver> {
+        val defaultDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+        if (defaultDrivers.isNotEmpty()) {
+            return defaultDrivers
+        }
+
+        val rawDevices = usbManager.deviceList.values
+        if (rawDevices.isEmpty()) return emptyList()
+
+        val customTable = ProbeTable()
+        for (device in rawDevices) {
+            customTable.addProduct(device.vendorId, device.productId, FtdiSerialDriver::class.java)
+            customTable.addProduct(device.vendorId, device.productId, ProlificSerialDriver::class.java)
+            customTable.addProduct(device.vendorId, device.productId, Cp21xxSerialDriver::class.java)
+            customTable.addProduct(device.vendorId, device.productId, Ch34xSerialDriver::class.java)
+            customTable.addProduct(device.vendorId, device.productId, CdcAcmSerialDriver::class.java)
+        }
+        val customProber = UsbSerialProber(customTable)
+        return customProber.findAllDrivers(usbManager)
+    }
+
     fun getDevice(): UsbDevice? {
-        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
-        return availableDrivers.firstOrNull()?.device
+        val drivers = getDrivers()
+        if (drivers.isNotEmpty()) {
+            return drivers.first().device
+        }
+        return usbManager.deviceList.values.firstOrNull()
     }
 
     fun hasPermission(): Boolean {
@@ -35,12 +66,19 @@ class UsbSerialTransport(
     override fun open() {
         if (usbPort != null) return
 
-        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
-        if (availableDrivers.isEmpty()) {
-            throw IOException("No USB serial devices found")
+        val drivers = getDrivers()
+        val driver = if (drivers.isNotEmpty()) {
+            drivers.first()
+        } else {
+            val rawDevice = usbManager.deviceList.values.firstOrNull() 
+                ?: throw IOException("No USB optical probe detected. Make sure OTG is enabled in Phone Settings.")
+            val customTable = ProbeTable()
+            customTable.addProduct(rawDevice.vendorId, rawDevice.productId, FtdiSerialDriver::class.java)
+            val customProber = UsbSerialProber(customTable)
+            customProber.findAllDrivers(usbManager).firstOrNull() 
+                ?: throw IOException("USB device (VID: ${rawDevice.vendorId}, PID: ${rawDevice.productId}) serial driver not found")
         }
 
-        val driver = availableDrivers.first()
         val device = driver.device
         
         if (!usbManager.hasPermission(device)) {

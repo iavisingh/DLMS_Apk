@@ -105,10 +105,13 @@ fun UsbConnectScreen(
             } else {
                 PendingIntent.FLAG_UPDATE_CURRENT
             }
-            val intent = PendingIntent.getBroadcast(
-                context, 0, Intent(ACTION_USB_PERMISSION), flags
+            val intent = Intent(ACTION_USB_PERMISSION).apply {
+                setPackage(context.packageName)
+            }
+            val permissionIntent = PendingIntent.getBroadcast(
+                context, 0, intent, flags
             )
-            transport.requestPermission(intent)
+            transport.requestPermission(permissionIntent)
             status = "Waiting for USB permission..."
         } catch (e: Exception) {
             status = "Error requesting permission: ${e.message}"
@@ -244,7 +247,7 @@ fun UsbConnectScreen(
 
         val device = transport.getDevice()
         if (device == null) {
-            status = "No USB optical probe detected."
+            status = "No USB device detected. Ensure OTG is turned ON in Phone Settings."
             showRetryButton = true
             showSimulatorConfig = true
             return
