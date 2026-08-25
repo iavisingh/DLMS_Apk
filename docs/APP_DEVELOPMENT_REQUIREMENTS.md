@@ -22,7 +22,7 @@ Clicking the add button opens a popup/dialog for detailed DLMS configuration.
 The configuration should be similar in spirit to Gurux GXDirector and should include:
 
 - Meter name.
-- Transport medium:
+- Transport medium for this individual meter:
   - BLE
   - OTG
   - TCP
@@ -45,6 +45,8 @@ The configuration should be similar in spirit to Gurux GXDirector and should inc
   - Frame size, timeout, retry count, and wait time where applicable.
 
 Clicking **Save** closes the popup and returns to the Meters page with the newly added meter visible in the list/tree.
+
+Transport selection is per meter profile, not global. Multiple saved meters can use different transport media simultaneously.
 
 ## Meter Actions
 
