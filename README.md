@@ -35,3 +35,11 @@ See [docs/APP_DEVELOPMENT_REQUIREMENTS.md](docs/APP_DEVELOPMENT_REQUIREMENTS.md)
 Use Jetpack Compose Material 3 as the main framework, with Compose Material 3 Adaptive for list-detail layouts on tablets and large screens. The app already uses Compose, so this keeps development aligned with the existing codebase.
 
 See [docs/UI_FRAMEWORK_RECOMMENDATIONS.md](docs/UI_FRAMEWORK_RECOMMENDATIONS.md) for options and suggestions.
+
+## Development Documents
+
+- [App Development Requirements](docs/APP_DEVELOPMENT_REQUIREMENTS.md)
+- [UI Framework Recommendations](docs/UI_FRAMEWORK_RECOMMENDATIONS.md)
+- [UI Theme And Templates](docs/UI_THEME_AND_TEMPLATES.md)
+- [Logo Recommendations](docs/LOGO_RECOMMENDATIONS.md)
+- [Development Context Brief](docs/DEVELOPMENT_CONTEXT_BRIEF.md)
