@@ -36,6 +36,13 @@ Use Jetpack Compose Material 3 as the main framework, with Compose Material 3 Ad
 
 See [docs/UI_FRAMEWORK_RECOMMENDATIONS.md](docs/UI_FRAMEWORK_RECOMMENDATIONS.md) for options and suggestions.
 
+## Final Design Decisions
+
+- UI theme: **Option A: Meter Console**
+- Logo: **Meter Signal**
+- UI reference: [Option A Meter Console Reference](docs/assets/ui-option-a-meter-console-reference.svg)
+- Logo reference: [Meter Signal Logo](docs/assets/logo-meter-signal.svg)
+
 ## Development Documents
 
 - [App Development Requirements](docs/APP_DEVELOPMENT_REQUIREMENTS.md)
