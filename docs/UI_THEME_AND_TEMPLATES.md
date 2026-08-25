@@ -12,6 +12,11 @@ Selected logo direction:
 - Smart meter face with communication arcs.
 - Deep teal adaptive icon background with a simple white meter mark.
 
+Reference assets:
+
+- [Option A UI Reference](assets/ui-option-a-meter-console-reference.svg)
+- [Selected Meter Signal Logo](assets/logo-meter-signal.svg)
+
 ## Verified Basis
 
 The recommendation is based on current Android guidance:
