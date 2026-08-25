@@ -1,5 +1,11 @@
 # Logo Recommendations
 
+## Final Decision
+
+Use **Logo Concept 1: Meter Signal** as the selected app logo direction.
+
+This is the chosen direction for the DLMS Configurator app because it communicates meter communication clearly at small launcher-icon size and does not imply that the app only supports one transport. It can represent OTG, BLE, and TCP meter communication at the same time.
+
 ## Direction
 
 The app logo should match **Option A: Meter Console**:
@@ -27,11 +33,15 @@ Avoid:
 - Decorative gradients as the core mark.
 - Generic lightning-bolt-only icon.
 
-## Logo Concept 1: Meter Signal
+## Selected Logo: Concept 1, Meter Signal
 
 Symbol:
 
 - Simple smart meter face with wireless/signal arcs.
+- Rounded square adaptive Android icon background.
+- Meter body centered inside the icon safe area.
+- Signal arcs in the upper-right area to represent communication.
+- Optional small circular port/status dot on the meter face.
 
 Meaning:
 
@@ -45,7 +55,17 @@ Best for:
 
 Recommendation:
 
-- Strongest default choice.
+- Final selected app logo direction.
+
+Suggested visual details:
+
+- Background: deep teal.
+- Meter symbol: white or very light neutral.
+- Signal arcs: white with one teal/cyan accent arc if needed.
+- Detail strokes: dark teal/slate.
+- Keep internal details minimal so the icon remains readable at 48dp and launcher scale.
+
+Do not include small text inside the icon. Avoid putting `DLMS` text inside the launcher mark.
 
 ## Logo Concept 2: COSEM Object Tree
 
@@ -104,6 +124,6 @@ Recommendation:
 
 ## Final Recommendation
 
-Use **Logo Concept 1: Meter Signal** as the default direction.
+Use **Logo Concept 1: Meter Signal**.
 
-Keep **Logo Concept 4: Secure Meter Shield** as the alternate direction if the app should emphasize secure DLMS configuration over general meter connectivity.
+Keep Concept 4 only as a future alternate if the product is repositioned primarily around secure DLMS configuration.
