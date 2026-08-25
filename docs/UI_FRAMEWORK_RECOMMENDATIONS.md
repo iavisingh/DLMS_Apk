@@ -33,21 +33,7 @@ Useful patterns for this app:
 - Outlined text fields for DLMS parameters.
 - Switches for binary settings such as ciphering and invocation-counter sync.
 
-## Other Options Considered
-
-### Android Views + Material Components
-
-Not recommended for new work in this app.
-
-The app is already Compose-based, and the classic Android Views Material Components library is in maintenance mode. It is still valid for legacy apps, but it should not be the main direction for this project.
-
-### Third-Party Compose UI Kits
-
-Use cautiously.
-
-Third-party UI kits can speed up dashboards or design polish, but this app needs precise engineering workflows, hardware states, secure settings, and DLMS object trees. Native Compose Material 3 components are easier to maintain and better aligned with Android platform behavior.
-
-### Custom Tree Component
+## COSEM Tree Component
 
 Recommended as an app-level component, not a separate framework.
 
@@ -59,7 +45,7 @@ Use a meter-first layout:
 
 1. **Meters screen** as the app entry point.
 2. Add button opens a **DLMS Configuration** dialog.
-3. Transport selection uses a segmented control: BLE, OTG, TCP.
+3. Transport selection uses a per-meter segmented control: BLE, OTG, TCP.
 4. Save returns to the meter list.
 5. Selecting a meter reveals Connect, Disconnect, Properties, and Delete actions.
 6. Connection state appears inline on the selected meter.
