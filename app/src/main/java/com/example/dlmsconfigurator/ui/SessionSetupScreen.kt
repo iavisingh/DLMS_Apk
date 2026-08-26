@@ -1,7 +1,10 @@
 package com.example.dlmsconfigurator
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,17 +12,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -38,10 +47,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.dlmsconfigurator.core.data.DataRepository
@@ -51,6 +60,10 @@ import com.example.dlmsconfigurator.core.data.DataRepository
 fun SessionSetupScreen(
     stagedFileId: String,
     onConfirm: (
+        transportType: String, // "usb", "ble", "tcp"
+        bleAddress: String?,
+        tcpHost: String?,
+        tcpPort: Int?,
         baud: Int?,
         client: Int?,
         server: Int?,
@@ -72,7 +85,20 @@ fun SessionSetupScreen(
 
     val connection = currentFile.parsedContent?.connection
 
+    // Transport selection: "usb", "ble", "tcp"
+    var selectedTransport by remember { mutableStateOf("usb") }
+
+    // BLE specific params
+    var bleMacAddress by remember { mutableStateOf("") }
+
+    // TCP specific params
+    var tcpHost by remember { mutableStateOf(connection?.pushServerV4Ip ?: "10.92.170.72") }
+    var tcpPort by remember { mutableStateOf((connection?.pushServerV4Port ?: 4059).toString()) }
+
+    // Serial/USB params
     var baudRate by remember { mutableStateOf(connection?.baudRate?.toString() ?: "9600") }
+
+    // DLMS Params
     var clientAddress by remember { mutableStateOf(connection?.clientAddress?.toString() ?: "16") }
     var serverAddress by remember { mutableStateOf(connection?.serverAddress?.toString() ?: "1") }
     var security by remember { mutableStateOf(connection?.security ?: "none") }
@@ -126,32 +152,146 @@ fun SessionSetupScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "These override connection settings will be transient and only apply to the upcoming run.",
+                text = "Select transport layer interface and customize DLMS communication settings.",
                 color = Color.Gray,
                 fontSize = 13.sp,
                 lineHeight = 18.sp
             )
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            OutlinedTextField(
-                value = baudRate,
-                onValueChange = { baudRate = it },
-                label = { Text("Baud Rate") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedContainerColor = Color(0xFF1E1E2F),
-                    unfocusedContainerColor = Color(0xFF1E1E2F),
-                    focusedLabelColor = Color(0xFF007AFF),
-                    unfocusedLabelColor = Color.Gray
-                )
+            // Transport Selection Header
+            Text(
+                text = "TRANSPORT LAYER INTERFACE",
+                color = Color(0xFF007AFF),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
             )
+            Spacer(modifier = Modifier.height(10.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                TransportCard(
+                    title = "OTG",
+                    subtitle = "USB Probe",
+                    icon = Icons.Default.Usb,
+                    isSelected = selectedTransport == "usb",
+                    onClick = { selectedTransport = "usb" },
+                    modifier = Modifier.weight(1f)
+                )
+
+                TransportCard(
+                    title = "Bluetooth",
+                    subtitle = "BLE Probe",
+                    icon = Icons.Default.Bluetooth,
+                    isSelected = selectedTransport == "ble",
+                    onClick = { selectedTransport = "ble" },
+                    modifier = Modifier.weight(1f)
+                )
+
+                TransportCard(
+                    title = "TCP IPv4/v6",
+                    subtitle = "Network / Sim",
+                    icon = Icons.Default.Language,
+                    isSelected = selectedTransport == "tcp",
+                    onClick = { selectedTransport = "tcp" },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Transport Specific Configuration Section
+            when (selectedTransport) {
+                "usb" -> {
+                    OutlinedTextField(
+                        value = baudRate,
+                        onValueChange = { baudRate = it },
+                        label = { Text("USB Serial Baud Rate") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color(0xFF1E1E2F),
+                            unfocusedContainerColor = Color(0xFF1E1E2F),
+                            focusedLabelColor = Color(0xFF007AFF),
+                            unfocusedLabelColor = Color.Gray
+                        )
+                    )
+                }
+                "ble" -> {
+                    OutlinedTextField(
+                        value = bleMacAddress,
+                        onValueChange = { bleMacAddress = it },
+                        label = { Text("BLE Device MAC Address (Optional - can scan next)") },
+                        placeholder = { Text("e.g. AA:BB:CC:DD:EE:FF", color = Color.DarkGray) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color(0xFF1E1E2F),
+                            unfocusedContainerColor = Color(0xFF1E1E2F),
+                            focusedLabelColor = Color(0xFF007AFF),
+                            unfocusedLabelColor = Color.Gray
+                        )
+                    )
+                }
+                "tcp" -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = tcpHost,
+                            onValueChange = { tcpHost = it },
+                            label = { Text("TCP Host IP") },
+                            modifier = Modifier.weight(2f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedContainerColor = Color(0xFF1E1E2F),
+                                unfocusedContainerColor = Color(0xFF1E1E2F),
+                                focusedLabelColor = Color(0xFF007AFF),
+                                unfocusedLabelColor = Color.Gray
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = tcpPort,
+                            onValueChange = { tcpPort = it },
+                            label = { Text("Port") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedContainerColor = Color(0xFF1E1E2F),
+                                unfocusedContainerColor = Color(0xFF1E1E2F),
+                                focusedLabelColor = Color(0xFF007AFF),
+                                unfocusedLabelColor = Color.Gray
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = "DLMS PROTOCOL SETTINGS",
+                color = Color(0xFF007AFF),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(14.dp))
 
             OutlinedTextField(
                 value = clientAddress,
@@ -252,18 +392,15 @@ fun SessionSetupScreen(
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Association Password (Hex/Text)") },
-                    visualTransformation = VisualTransformation.None,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    enabled = false,
+                    label = { Text("Association Password (Hidden)") },
+                    visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = TextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF1E1E2F),
-                        unfocusedContainerColor = Color(0xFF1E1E2F),
-                        focusedLabelColor = Color(0xFF007AFF),
-                        unfocusedLabelColor = Color.Gray
+                        disabledTextColor = Color.Gray,
+                        disabledContainerColor = Color(0xFF161625),
+                        disabledLabelColor = Color.Gray
                     )
                 )
             }
@@ -279,7 +416,7 @@ fun SessionSetupScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Enable Ciphering", color = Color.White, fontWeight = FontWeight.SemiBold)
                     Text("Enable Encryption & Authentication (Security Suite 0)", color = Color.Gray, fontSize = 12.sp)
                 }
@@ -317,16 +454,15 @@ fun SessionSetupScreen(
                 OutlinedTextField(
                     value = authenticationKey,
                     onValueChange = { authenticationKey = it },
-                    label = { Text("Authentication Key (16-byte Hex)") },
+                    enabled = false,
+                    label = { Text("Authentication Key (Hidden)") },
+                    visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = TextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF1E1E2F),
-                        unfocusedContainerColor = Color(0xFF1E1E2F),
-                        focusedLabelColor = Color(0xFF007AFF),
-                        unfocusedLabelColor = Color.Gray
+                        disabledTextColor = Color.Gray,
+                        disabledContainerColor = Color(0xFF161625),
+                        disabledLabelColor = Color.Gray
                     )
                 )
 
@@ -335,16 +471,15 @@ fun SessionSetupScreen(
                 OutlinedTextField(
                     value = encryptionKey,
                     onValueChange = { encryptionKey = it },
-                    label = { Text("Encryption / Cipher Key (16-byte Hex)") },
+                    enabled = false,
+                    label = { Text("Encryption / Cipher Key (Hidden)") },
+                    visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = TextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF1E1E2F),
-                        unfocusedContainerColor = Color(0xFF1E1E2F),
-                        focusedLabelColor = Color(0xFF007AFF),
-                        unfocusedLabelColor = Color.Gray
+                        disabledTextColor = Color.Gray,
+                        disabledContainerColor = Color(0xFF161625),
+                        disabledLabelColor = Color.Gray
                     )
                 )
 
@@ -379,7 +514,7 @@ fun SessionSetupScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Use Invocation Counter", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text("Sync counter via Public Client before association (turn off for direct US connection)", color = Color.Gray, fontSize = 12.sp)
+                        Text("Sync counter via Public Client before association", color = Color.Gray, fontSize = 12.sp)
                     }
                     Switch(
                         checked = useInvocationCounter,
@@ -403,7 +538,7 @@ fun SessionSetupScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Detailed Logging", color = Color.White, fontWeight = FontWeight.SemiBold)
                     Text("Save hex raw values in operations log", color = Color.Gray, fontSize = 12.sp)
                 }
@@ -443,7 +578,15 @@ fun SessionSetupScreen(
                         val authKey = if (ciphering && authenticationKey.isNotBlank()) authenticationKey else null
                         val encKey = if (ciphering && encryptionKey.isNotBlank()) encryptionKey else null
                         val counterObis = if (ciphering && invocationCounterObis.isNotBlank()) invocationCounterObis else null
+                        val bleAddr = if (selectedTransport == "ble" && bleMacAddress.isNotBlank()) bleMacAddress.trim() else null
+                        val host = if (selectedTransport == "tcp" && tcpHost.isNotBlank()) tcpHost.trim() else null
+                        val port = if (selectedTransport == "tcp") tcpPort.toIntOrNull() else null
+
                         onConfirm(
+                            selectedTransport,
+                            bleAddr,
+                            host,
+                            port,
                             baud,
                             clientAddressVal,
                             serverAddressVal,
@@ -465,6 +608,53 @@ fun SessionSetupScreen(
                     Text("Confirm")
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun TransportCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1E1E2F))
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) Color(0xFF007AFF) else Color(0xFF2E2E42),
+                shape = RoundedCornerShape(12.dp)
+            )
+            .clickable { onClick() }
+            .padding(12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = if (isSelected) Color(0xFF007AFF) else Color.Gray,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+            )
+            Text(
+                text = subtitle,
+                color = if (isSelected) Color(0xFF007AFF) else Color.Gray,
+                fontSize = 10.sp
+            )
         }
     }
 }

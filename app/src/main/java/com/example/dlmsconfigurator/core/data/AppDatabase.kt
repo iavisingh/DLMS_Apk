@@ -5,18 +5,28 @@ import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
-    entities = [SessionEntity::class, OperationEntity::class, AuthEventEntity::class],
-    version = 1,
+    entities = [
+        SessionEntity::class,
+        OperationEntity::class,
+        AuthEventEntity::class,
+        DeviceEntity::class,
+        AssociationObjectEntity::class
+    ],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun operationDao(): OperationDao
     abstract fun authEventDao(): AuthEventDao
+    abstract fun deviceDao(): DeviceDao
+    abstract fun associationObjectDao(): AssociationObjectDao
 
     companion object {
         private const val TAG = "AppDatabase"
@@ -24,6 +34,69 @@ abstract class AppDatabase : RoomDatabase() {
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        /**
+         * Migration 1→2: Adds the `devices` and `association_objects` tables
+         * without touching the existing sessions / operations / auth_events tables.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `devices` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `commSettingsJson` TEXT NOT NULL,
+                        `clientAddress` INTEGER NOT NULL DEFAULT 16,
+                        `serverAddress` INTEGER NOT NULL DEFAULT 1,
+                        `security` TEXT NOT NULL DEFAULT 'none',
+                        `interfaceType` TEXT NOT NULL DEFAULT 'HDLC',
+                        `logicalNameReferencing` INTEGER NOT NULL DEFAULT 1,
+                        `passwordKeyRef` TEXT,
+                        `systemTitleKeyRef` TEXT,
+                        `authKeyRef` TEXT,
+                        `encKeyRef` TEXT,
+                        `ciphering` INTEGER NOT NULL DEFAULT 0,
+                        `invocationCounterObis` TEXT,
+                        `useInvocationCounter` INTEGER NOT NULL DEFAULT 0,
+                        `lastConnectedAt` INTEGER,
+                        `lastKnownMeterSerial` TEXT,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `association_objects` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `deviceId` INTEGER NOT NULL,
+                        `classId` INTEGER NOT NULL,
+                        `version` INTEGER NOT NULL DEFAULT 0,
+                        `obisCode` TEXT NOT NULL,
+                        `className` TEXT NOT NULL DEFAULT '',
+                        `attrAccessJson` TEXT NOT NULL DEFAULT '{}',
+                        `methodAccessJson` TEXT NOT NULL DEFAULT '{}',
+                        `cachedAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`deviceId`) REFERENCES `devices`(`id`) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_association_objects_deviceId` ON `association_objects`(`deviceId`)")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `authenticationRole` TEXT NOT NULL DEFAULT 'PC'")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `addressType` TEXT NOT NULL DEFAULT 'Default'")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `logicalServer` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `physicalServer` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `securitySuite` TEXT NOT NULL DEFAULT 'Suite0'")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `invocationCounterInitial` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `retryCount` INTEGER NOT NULL DEFAULT 3")
+                db.execSQL("ALTER TABLE `devices` ADD COLUMN `retryIntervalMs` INTEGER NOT NULL DEFAULT 1000")
+            }
+        }
 
         fun getInstance(context: Context, secureKeyStore: SecureKeyStore): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -34,17 +107,12 @@ abstract class AppDatabase : RoomDatabase() {
         private fun buildDatabase(context: Context, secureKeyStore: SecureKeyStore): AppDatabase {
             System.loadLibrary("sqlcipher")
 
-            // The passphrase is stored as a hex string. Decode it to raw bytes so that
-            // SQLCipher uses the actual 256-bit key, not its UTF-8 byte representation.
             val passphrase = secureKeyStore.getDatabasePassphrase()
             val passphraseBytes = hexToBytes(passphrase)
             val factory = SupportOpenHelperFactory(passphraseBytes)
 
             return tryBuildDatabase(context, factory)
                 ?: run {
-                    // Passphrase mismatch (e.g. EncryptedSharedPreferences was reset and a new
-                    // passphrase was generated, but the old DB still exists on disk).
-                    // The stored data is unrecoverable, so delete the stale DB and start fresh.
                     Log.w(TAG, "DB open failed — possible passphrase mismatch. Deleting stale DB and rebuilding.")
                     deleteDatabase(context)
                     tryBuildDatabase(context, factory)
@@ -63,11 +131,10 @@ abstract class AppDatabase : RoomDatabase() {
                     DB_NAME
                 )
                     .openHelperFactory(factory)
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
 
                 // Force the DB connection open NOW so SQLCipher validates the key immediately
-                // rather than deferring to the first query (which would crash later).
                 db.openHelper.writableDatabase
                 db
             } catch (e: Exception) {
@@ -78,7 +145,6 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun deleteDatabase(context: Context) {
             try {
-                // Delete the main DB file and its WAL/SHM companions
                 val dbFile = context.getDatabasePath(DB_NAME)
                 listOf(dbFile, File("${dbFile.path}-wal"), File("${dbFile.path}-shm"))
                     .forEach { if (it.exists()) it.delete() }
@@ -98,4 +164,3 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 }
-

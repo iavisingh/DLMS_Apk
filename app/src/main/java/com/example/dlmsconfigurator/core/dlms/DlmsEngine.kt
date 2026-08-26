@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.dlmsconfigurator.core.data.ConnectionParams
 import com.example.dlmsconfigurator.core.data.OperationItem
 import com.example.dlmsconfigurator.core.transport.DlmsTransport
+import com.example.dlmsconfigurator.ui.CosemObjectDescriptor
 import gurux.dlms.GXByteBuffer
 import gurux.dlms.GXDLMSClient
 import gurux.dlms.secure.GXDLMSSecureClient
@@ -14,7 +15,9 @@ import gurux.dlms.enums.DataType
 import gurux.dlms.enums.InterfaceType
 import gurux.dlms.enums.ObjectType
 import gurux.dlms.enums.Security
+import gurux.dlms.objects.GXDLMSAssociationLogicalName
 import gurux.dlms.objects.GXDLMSObject
+import gurux.dlms.objects.enums.SecuritySuite
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -27,23 +30,36 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 class DlmsEngine(
     private val connectionParams: ConnectionParams,
-    private val transport: DlmsTransport
+    private val transport: DlmsTransport,
+    private val onRawFrame: ((direction: String, hex: String) -> Unit)? = null
 ) {
     private val client = GXDLMSSecureClient()
     private val TAG = "DLMS_COMM"
+    private val operationLock = ReentrantLock()
+    private val retryCount = (connectionParams.resendCount ?: 3).coerceAtLeast(0)
+    private val readTimeoutMs = parseWaitTimeMillis(connectionParams.waitTime)
+    private var cachedReleasePackets: Array<ByteArray> = emptyArray()
+    private var cachedDisconnectPacket: ByteArray? = null
 
     init {
         client.apply {
-            useLogicalNameReferencing = true
+            useLogicalNameReferencing = connectionParams.logicalNameReferencing != 0
             interfaceType = when (connectionParams.interfaceType.uppercase()) {
                 "HDLC" -> InterfaceType.HDLC
                 else -> InterfaceType.HDLC
             }
             clientAddress = connectionParams.clientAddress
             serverAddress = connectionParams.serverAddress
+            ciphering.securitySuite = when (connectionParams.securitySuite?.lowercase()) {
+                "suite1" -> SecuritySuite.SUITE_1
+                "suite2" -> SecuritySuite.SUITE_2
+                else -> SecuritySuite.SUITE_0
+            }
 
             connectionParams.systemTitle?.let {
                 ciphering.systemTitle = hexToBytes(it)
@@ -73,6 +89,11 @@ class DlmsEngine(
                     password = pwdBytes
                     ciphering.security = Security.NONE
                 }
+                "authentication" -> {
+                    authentication = Authentication.HIGH
+                    password = pwdBytes
+                    ciphering.security = Security.AUTHENTICATION
+                }
                 "authenticationencryption", "high_auth_enc" -> {
                     authentication = Authentication.HIGH
                     password = pwdBytes
@@ -100,8 +121,9 @@ class DlmsEngine(
         return result
     }
 
-    private fun readInvocationCounter(): Long {
+    private fun readInvocationCounter(onStatusUpdate: ((String) -> Unit)? = null): Long {
         Log.d(TAG, "Syncing invocation counter via Public Client...")
+        onStatusUpdate?.invoke("Public Client: Syncing invocation counter...")
         val tempClient = GXDLMSSecureClient().apply {
             useLogicalNameReferencing = true
             interfaceType = client.interfaceType
@@ -123,16 +145,19 @@ class DlmsEngine(
             if (tempClient.interfaceType == InterfaceType.HDLC) {
                 transport.flush()
                 Log.d(TAG, "Public Client: Sending SNRM...")
+                onStatusUpdate?.invoke("Public Client: Sending SNRM...")
                 val snrm = tempClient.snrmRequest()
                 if (snrm != null) {
                     readDLMSPacket(tempClient, snrm, reply)
                     tempClient.parseUAResponse(reply.data)
                     Log.d(TAG, "Public Client: Received UA.")
+                    onStatusUpdate?.invoke("Public Client: Received SNRM UA")
                 }
             }
 
             // 2. AARQ
             Log.d(TAG, "Public Client: Sending AARQ...")
+            onStatusUpdate?.invoke("Public Client: Sending AARQ...")
             val aarqPackets = tempClient.aarqRequest()
             for (packet in aarqPackets) {
                 reply.clear()
@@ -140,6 +165,7 @@ class DlmsEngine(
             }
             tempClient.parseAareResponse(reply.data)
             Log.d(TAG, "Public Client: Associated.")
+            onStatusUpdate?.invoke("Public Client: Associated (AARE Received)")
 
             // 3. Read Invocation Counter
             val obis = connectionParams.invocationCounterObis
@@ -149,6 +175,7 @@ class DlmsEngine(
                 ?: "0.0.43.1.0.255"
 
             Log.d(TAG, "Public Client: Reading invocation counter from $obis...")
+            onStatusUpdate?.invoke("Public Client: Reading counter from $obis...")
             val dataObj = createCosemObject(1, obis)
             val readPackets = tempClient.read(dataObj, 2)
             val readReply = GXReplyData()
@@ -162,27 +189,14 @@ class DlmsEngine(
                 else -> throw IOException("Invocation counter read from $obis returned non-numeric value: ${counterVal?.javaClass?.simpleName}")
             }
             Log.d(TAG, "Public Client: Current invocation counter = $result")
+            onStatusUpdate?.invoke("Public Client: Counter = $result")
 
-            // 4. Pre-generate disconnect frames NOW — while Gurux's state is fully valid.
-            //
-            //    Order is critical:
-            //    - releaseRequest() first  → RLRQ (application-layer release, HDLC link still up)
-            //    - disconnectRequest() second → DISC (HDLC data-link disconnect)
-            //
-            //    We cannot call these in the finally block because:
-            //    - releaseRequest() after disconnectRequest() → releaseRequest() throws (no app session)
-            //    - disconnectRequest() after releaseRequest() → returns null (no HDLC link in Gurux's state)
-            //    Storing them here avoids all state-machine conflicts.
             try {
                 rlrqPackets = tempClient.releaseRequest()
                 Log.d(TAG, "Public Client: RLRQ frame(s) pre-generated (${rlrqPackets.size} packet(s)).")
             } catch (e: Exception) {
                 Log.w(TAG, "PC: Failed to pre-generate RLRQ: ${e.message}")
             }
-            // Build the DISC frame manually — GXDLMSClient.disconnectRequest() always returns
-            // null after releaseRequest() due to Gurux's state machine (ConnectionState → NONE).
-            // The DISC frame is deterministic: 7E A0 07 [server] [client] 0x53 [CRC_L CRC_H] 7E
-            // Verified against GxDirector reference: for client=48 server=1 → 7E A0 07 03 61 53 65 81 7E
             try {
                 discPacket = buildHdlcDiscFrame(
                     serverAddress = tempClient.serverAddress,
@@ -196,13 +210,13 @@ class DlmsEngine(
             return result
 
         } finally {
-            // 5. Fire both pre-generated frames, then clean up.
-            //    No Gurux state calls here — just raw writes and fixed sleeps.
             try {
-                // Step 1: RLRQ — fire-and-forget, then wait 500ms
                 Log.d(TAG, "Public Client: Sending RLRQ (fire-and-forget, then 500ms)...")
+                onStatusUpdate?.invoke("Public Client: Releasing connection (RLRQ/DISC)...")
                 for (packet in rlrqPackets) {
-                    Log.d(TAG, "PC TX (RLRQ): ${bytesToHex(packet)}")
+                    val hex = bytesToHex(packet)
+                    Log.d(TAG, "PC TX (RLRQ): $hex")
+                    logRawFrame("TX", hex)
                     try {
                         transport.write(packet)
                     } catch (e: Exception) {
@@ -211,11 +225,12 @@ class DlmsEngine(
                 }
                 Thread.sleep(500)
 
-                // Step 2: DISC — fire-and-forget, then wait 500ms
                 Log.d(TAG, "Public Client: Sending DISC (fire-and-forget, then 500ms)...")
                 val disc = discPacket
                 if (disc != null) {
-                    Log.d(TAG, "PC TX (DISC): ${bytesToHex(disc)}")
+                    val hex = bytesToHex(disc)
+                    Log.d(TAG, "PC TX (DISC): $hex")
+                    logRawFrame("TX", hex)
                     try {
                         transport.write(disc)
                     } catch (e: Exception) {
@@ -241,36 +256,44 @@ class DlmsEngine(
         return result
     }
 
-    fun associate() {
+    fun associate(onStatusUpdate: ((String) -> Unit)? = null) {
         Log.d(TAG, "Starting DLMS Association...")
+        onStatusUpdate?.invoke("Opening transport hardware port...")
         if (!transport.isOpen()) {
             transport.open()
         }
 
         if (connectionParams.isUseInvocationCounter && (connectionParams.ciphering || client.ciphering.security != Security.NONE)) {
             try {
-                val counterVal = readInvocationCounter()
+                onStatusUpdate?.invoke("Syncing invocation counter via Public Client...")
+                val counterVal = readInvocationCounter(onStatusUpdate)
                 client.ciphering.invocationCounter = counterVal + 1
                 Log.d(TAG, "Invocation Counter incremented to: ${client.ciphering.invocationCounter}")
+                onStatusUpdate?.invoke("Invocation Counter synced: ${client.ciphering.invocationCounter}")
             } catch (e: Exception) {
                 Log.e(TAG, "Invocation counter sync failed: ${e.message}")
+                onStatusUpdate?.invoke("Invocation counter sync failed: ${e.message}")
                 throw IOException("Failed to synchronize invocation counter unauthenticated: ${e.message}", e)
             }
         } else if (connectionParams.ciphering || client.ciphering.security != Security.NONE) {
-            Log.d(TAG, "Skipping Public Client invocation counter sync (use_invocation_counter=0). Using direct US connection.")
+            client.ciphering.invocationCounter = connectionParams.invocationCounterInitial ?: 0
+            Log.d(TAG, "Skipping Public Client invocation counter sync (use_invocation_counter=0). Using configured counter ${client.ciphering.invocationCounter}.")
         }
 
+        onStatusUpdate?.invoke("Connecting US Client (Address: ${client.clientAddress})...")
         val reply = GXReplyData()
 
         // 1. SNRM Request (only for HDLC interface type)
         if (client.interfaceType == InterfaceType.HDLC) {
             transport.flush()
             Log.d(TAG, "Sending SNRM...")
+            onStatusUpdate?.invoke("Sending SNRM...")
             val snrm = client.snrmRequest()
             if (snrm != null) {
                 readDLMSPacket(client, snrm, reply)
                 client.parseUAResponse(reply.data)
                 Log.d(TAG, "Received UA.")
+                onStatusUpdate?.invoke("Received SNRM UA (HDLC Link Established)")
             }
             try { Thread.sleep(200) } catch (ignored: Exception) {}
         }
@@ -278,76 +301,530 @@ class DlmsEngine(
         // 2. AARQ Request
         transport.flush()
         Log.d(TAG, "Sending AARQ...")
+        onStatusUpdate?.invoke("Sending AARQ...")
         val aarqPackets = client.aarqRequest()
         for (packet in aarqPackets) {
             reply.clear()
             readDLMSPacket(client, packet, reply)
         }
         client.parseAareResponse(reply.data)
-        Log.d(TAG, "Received AARE.")
+        Log.d(TAG, "Received AARE (Application Associated).")
+        onStatusUpdate?.invoke("Received AARE (Application Associated)")
 
         // 3. Challenge (HLS authentication)
         if (client.isAuthenticationRequired) {
             try { Thread.sleep(200) } catch (ignored: Exception) {}
             transport.flush()
             Log.d(TAG, "HLS Authentication Required. Sending Challenge response...")
+            onStatusUpdate?.invoke("Sending HLS Challenge response...")
             val challenge = client.applicationAssociationRequest
             for (packet in challenge) {
                 reply.clear()
                 readDLMSPacket(client, packet, reply)
             }
 
-            // Re-adding the guard for Step 4 (ActionResponse).
-            // Gurux's parseAareResponse expects the AARE (0x61).
-            // Verification of the meter's proof in ActionResponse is done by getData.
             if (reply.data != null && reply.data.size() > 0 && reply.data.data[0] == 0x61.toByte()) {
                 client.parseAareResponse(reply.data)
                 Log.d(TAG, "HLS Authentication step 2 complete.")
+                onStatusUpdate?.invoke("HLS Authentication Complete")
             }
         }
 
         isAssociated = true
+        cacheDisconnectFrames()
         Log.i(TAG, "DLMS Association Successful.")
+        onStatusUpdate?.invoke("DLMS Association Successful!")
     }
 
     fun disconnect() {
         try {
-            Log.d(TAG, "Disconnecting with delays (200ms/1000ms)...")
-            // Send RLRQ
-            val release = client.releaseRequest()
-            for (packet in release) {
-                Log.d(TAG, "TX (RLRQ): ${bytesToHex(packet)}")
-                try {
-                    readDLMSPacket(client, packet, GXReplyData())
-                } catch (e: Exception) {
-                    Log.w(TAG, "RLRQ No Response: ${e.message}")
-                }
+            Log.d(TAG, "Disconnecting with fire-and-forget RLRQ/DISC...")
+            if (!transport.isOpen()) return
+
+            if (cachedReleasePackets.isEmpty() && cachedDisconnectPacket == null) {
+                cacheDisconnectFrames()
+            }
+
+            cachedReleasePackets.forEach { packet ->
+                writeDisconnectFrame("RLRQ", packet)
             }
             Thread.sleep(200)
 
-            // Send DISC
-            val disc = client.disconnectRequest()
-            if (disc != null) {
-                Log.d(TAG, "TX (DISC): ${bytesToHex(disc)}")
-                try {
-                    readDLMSPacket(client, disc, GXReplyData())
-                } catch (e: Exception) {
-                    Log.w(TAG, "DISC No Response: ${e.message}")
-                }
-            }
-            Thread.sleep(1000)
+            cachedDisconnectPacket?.let { writeDisconnectFrame("DISC", it) }
+            Thread.sleep(300)
         } catch (ignored: Exception) {
             Log.w(TAG, "Disconnect cleanup failed: ${ignored.message}")
         } finally {
             transport.close()
             isAssociated = false
+            cachedReleasePackets = emptyArray()
+            cachedDisconnectPacket = null
         }
     }
+
+    private fun cacheDisconnectFrames() {
+        cachedDisconnectPacket = try {
+            if (client.interfaceType == InterfaceType.HDLC) {
+                buildHdlcDiscFrame(
+                    serverAddress = client.serverAddress,
+                    clientAddress = client.clientAddress
+                )
+            } else {
+                client.disconnectRequest()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "DISC frame generation failed: ${e.message}")
+            null
+        }
+
+        cachedReleasePackets = try {
+            client.releaseRequest()
+        } catch (e: Exception) {
+            Log.w(TAG, "RLRQ frame generation failed: ${e.message}")
+            emptyArray()
+        }
+    }
+
+    private fun writeDisconnectFrame(label: String, packet: ByteArray) {
+        val hex = bytesToHex(packet)
+        Log.d(TAG, "TX ($label): $hex")
+        logRawFrame("TX", hex)
+        try {
+            transport.write(packet)
+        } catch (e: Exception) {
+            Log.w(TAG, "$label write failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Reads the COSEM object directory from the device using Class 15
+     * (Association Logical Name) attribute 2 (object_list).
+     *
+     * Must be called after [associate] returns successfully.
+     */
+    fun readAssociationView(): List<CosemObjectDescriptor> = operationLock.withLock {
+        transport.flush()
+        Log.d(TAG, "Reading Association View (Class 15, attr 2)…")
+
+        val assocObj = GXDLMSAssociationLogicalName()
+        val requestList = client.read(assocObj, 2)
+        val reply = GXReplyData()
+        readDataBlock(client, requestList, reply)
+        client.updateValue(assocObj, 2, reply.value)
+
+        val objectList = assocObj.objectList ?: return@withLock emptyList()
+        Log.i(TAG, "Association View: ${objectList.size} objects returned")
+
+        return@withLock objectList.map { obj ->
+            val logicalName = obj.logicalName ?: ""
+            CosemObjectDescriptor(
+                classId   = obj.objectType.value,
+                version   = obj.version.toShort(),
+                obisCode  = logicalName,
+                className = resolveObisDisplayName(logicalName, obj.objectType.value)
+                    ?: resolveClassName(obj.objectType.value)
+            )
+        }
+    }
+
+    private fun resolveClassName(classId: Int): String = when (classId) {
+        1    -> "Data"
+        3    -> "Register"
+        4    -> "Extended Register"
+        5    -> "Demand Register"
+        6    -> "Register Activation"
+        7    -> "Profile Generic"
+        8    -> "Clock"
+        9    -> "Script Table"
+        10   -> "Schedule"
+        11   -> "Special Days Table"
+        15   -> "Association LN"
+        17   -> "SAP Assignment"
+        18   -> "Image Transfer"
+        19   -> "Ikek"
+        20   -> "Register Monitor"
+        21   -> "Register Table"
+        22   -> "Action Schedule"
+        23   -> "Activity Calendar"
+        24   -> "Security Setup"
+        25   -> "IEC HDLC Setup"
+        26   -> "IEC Twisted Pair"
+        27   -> "M-Bus Slave Port"
+        28   -> "Data Protection"
+        29   -> "Push Setup"
+        40   -> "Push Setup"
+        41   -> "TCP UDP Setup"
+        42   -> "IPv4 Setup"
+        43   -> "MAC Address Setup"
+        44   -> "PPP Setup"
+        45   -> "GPRS Modem Setup"
+        46   -> "SMTP Setup"
+        47   -> "GSM Diagnostic"
+        48   -> "IPv6 Setup"
+        64   -> "Utility Tables"
+        70   -> "Disconnect Control"
+        71   -> "Limiter"
+        72   -> "M-Bus Client"
+        73   -> "Wireless Mode Q-Channel"
+        74   -> "M-Bus Master Port"
+        75   -> "DLMS Port Protection"
+        else -> "Class $classId"
+    }
+
+    fun readObjectSnapshot(classId: Int, obisCode: String): DlmsVisualSnapshot = operationLock.withLock {
+        transport.flush()
+        val title = resolveObisDisplayName(obisCode, classId) ?: resolveClassName(classId)
+        val sections = mutableListOf<DlmsVisualSection>()
+        var profileControls: DlmsProfileControls? = null
+        var profileTable: DlmsProfileTable? = null
+        var profileDataTable: DlmsProfileTable? = null
+        var profileCaptureTable: DlmsProfileTable? = null
+
+        when (classId) {
+            1 -> {
+                sections += DlmsVisualSection(
+                    "Data Value",
+                    listOf(readVisualRow(classId, obisCode, 2, "Value"))
+                )
+            }
+            3 -> {
+                val scalerUnit = readScalerUnit(classId, obisCode, 3)
+                val value = readAttributeValue(classId, obisCode, 2)
+                sections += DlmsVisualSection(
+                    "Register Value",
+                    listOf(
+                        visualRowFromValue("Scaled value", applyScaler(value, scalerUnit), value),
+                        visualRowFromValue("Raw value", value),
+                        DlmsVisualRow("Scaler", scalerUnit?.scaler?.toString() ?: "Unavailable", DlmsVisualKind.NUMBER),
+                        DlmsVisualRow("Unit", scalerUnit?.unitName ?: "Unavailable")
+                    )
+                )
+            }
+            4 -> {
+                val scalerUnit = readScalerUnit(classId, obisCode, 3)
+                val value = readAttributeValue(classId, obisCode, 2)
+                sections += DlmsVisualSection(
+                    "Extended Register",
+                    listOf(
+                        visualRowFromValue("Scaled value", applyScaler(value, scalerUnit), value),
+                        visualRowFromValue("Raw value", value),
+                        DlmsVisualRow("Scaler", scalerUnit?.scaler?.toString() ?: "Unavailable", DlmsVisualKind.NUMBER),
+                        DlmsVisualRow("Unit", scalerUnit?.unitName ?: "Unavailable"),
+                        readVisualRow(classId, obisCode, 4, "Status"),
+                        readVisualRow(classId, obisCode, 5, "Capture time")
+                    )
+                )
+            }
+            5 -> {
+                val scalerUnit = readScalerUnit(classId, obisCode, 4)
+                val currentAverage = readAttributeValue(classId, obisCode, 2)
+                val lastAverage = readAttributeValue(classId, obisCode, 3)
+                sections += DlmsVisualSection(
+                    "Demand Register",
+                    listOf(
+                        visualRowFromValue("Current average", applyScaler(currentAverage, scalerUnit), currentAverage),
+                        visualRowFromValue("Last average", applyScaler(lastAverage, scalerUnit), lastAverage),
+                        DlmsVisualRow("Scaler", scalerUnit?.scaler?.toString() ?: "Unavailable", DlmsVisualKind.NUMBER),
+                        DlmsVisualRow("Unit", scalerUnit?.unitName ?: "Unavailable"),
+                        readVisualRow(classId, obisCode, 5, "Status"),
+                        readVisualRow(classId, obisCode, 6, "Capture time"),
+                        readVisualRow(classId, obisCode, 7, "Start time current"),
+                        readVisualRow(classId, obisCode, 8, "Period"),
+                        readVisualRow(classId, obisCode, 9, "Number of periods")
+                    )
+                )
+            }
+            7 -> {
+                val bufferResult = safeReadAttribute(classId, obisCode, 2)
+                val captureObjects = safeReadAttribute(classId, obisCode, 3).getOrNull()
+                val capturePeriod = safeReadAttribute(classId, obisCode, 4).getOrNull()
+                val sortMethod = safeReadAttribute(classId, obisCode, 5).getOrNull()
+                val sortObject = safeReadAttribute(classId, obisCode, 6).getOrNull()
+                val entriesInUse = safeReadAttribute(classId, obisCode, 7).getOrNull()
+                val profileEntries = safeReadAttribute(classId, obisCode, 8).getOrNull()
+                val captureColumns = captureObjectsToColumns(captureObjects)
+                profileControls = DlmsProfileControls(
+                    logicalName = obisCode,
+                    capturePeriod = formatValue(capturePeriod),
+                    entriesInUse = formatValue(entriesInUse),
+                    profileEntries = formatValue(profileEntries),
+                    sortMode = formatValue(sortMethod),
+                    sortObject = formatValue(sortObject)
+                )
+                sections += DlmsVisualSection(
+                    "Profile Metadata",
+                    listOf(
+                        visualRowFromValue("Logical Name", obisCode),
+                        visualRowFromValue("Period", capturePeriod),
+                        visualRowFromValue("Entries", "${formatValue(entriesInUse)} / ${formatValue(profileEntries)}"),
+                        visualRowFromValue("Sort Mode", sortMethod),
+                        visualRowFromValue("Sort Object", sortObject)
+                    )
+                )
+                profileCaptureTable = captureColumnsToTable(captureColumns)
+                profileDataTable = bufferResult.fold(
+                    onSuccess = { profileBufferToTable(captureColumns, it) },
+                    onFailure = {
+                        DlmsProfileTable(
+                            columns = listOf("Status"),
+                            rows = listOf(listOf("Profile data read failed: ${it.message ?: "unknown error"}"))
+                        )
+                    }
+                )
+                profileTable = profileCaptureTable
+            }
+            8 -> {
+                sections += DlmsVisualSection(
+                    "Clock",
+                    listOf(
+                        readVisualRow(classId, obisCode, 2, "Time"),
+                        readVisualRow(classId, obisCode, 3, "Time zone"),
+                        readVisualRow(classId, obisCode, 4, "Status"),
+                        readVisualRow(classId, obisCode, 5, "Daylight savings begin"),
+                        readVisualRow(classId, obisCode, 6, "Daylight savings end"),
+                        readVisualRow(classId, obisCode, 7, "Daylight savings deviation"),
+                        readVisualRow(classId, obisCode, 8, "Daylight savings enabled")
+                    )
+                )
+            }
+            29, 40 -> {
+                sections += DlmsVisualSection(
+                    "Push Setup",
+                    listOf(
+                        readVisualRow(classId, obisCode, 2, "Push object list"),
+                        readVisualRow(classId, obisCode, 3, "Destination and method"),
+                        readVisualRow(classId, obisCode, 4, "Communication window"),
+                        readVisualRow(classId, obisCode, 5, "Randomisation start interval"),
+                        readVisualRow(classId, obisCode, 6, "Number of retries"),
+                        readVisualRow(classId, obisCode, 7, "Repetition delay")
+                    )
+                )
+                sections += DlmsVisualSection(
+                    "Push Controls",
+                    listOf(
+                        DlmsVisualRow("Action", "Use method 1 to trigger a push when supported by the meter."),
+                        DlmsVisualRow("Transport note", "Destination is decoded from the COSEM transport-service structure when present.")
+                    )
+                )
+            }
+            else -> {
+                sections += DlmsVisualSection(
+                    "Standard Attributes",
+                    listOf(
+                        readVisualRow(classId, obisCode, 2, "Attribute 2"),
+                        DlmsVisualRow("Fallback", "No specialized visual template is defined for this class yet.")
+                    )
+                )
+            }
+        }
+
+        DlmsVisualSnapshot(
+            title = title,
+            classId = classId,
+            obisCode = obisCode,
+            sections = sections,
+            profileControls = profileControls,
+            profileTable = profileTable,
+            profileDataTable = profileDataTable,
+            profileCaptureTable = profileCaptureTable
+        )
+    }
+
+    private fun readVisualRow(classId: Int, obisCode: String, attribute: Int, label: String): DlmsVisualRow {
+        return safeReadAttribute(classId, obisCode, attribute)
+            .fold(
+                onSuccess = { visualRowFromValue(label, it) },
+                onFailure = { DlmsVisualRow(label, it.message ?: "Read failed", DlmsVisualKind.ERROR) }
+            )
+    }
+
+    private fun safeReadAttribute(classId: Int, obisCode: String, attribute: Int): Result<Any?> {
+        return try {
+            Result.success(readAttributeValue(classId, obisCode, attribute))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun readAttributeValue(classId: Int, obisCode: String, attribute: Int): Any? {
+        val cosemObj = createCosemObject(classId, obisCode)
+        val requestBytesList = client.read(cosemObj, attribute)
+        val reply = GXReplyData()
+        readDataBlock(client, requestBytesList, reply)
+        try {
+            client.updateValue(cosemObj, attribute, reply.value)
+        } catch (ignored: Exception) {}
+        return reply.value
+    }
+
+    private fun readScalerUnit(classId: Int, obisCode: String, attribute: Int): ScalerUnit? {
+        val value = safeReadAttribute(classId, obisCode, attribute).getOrNull() ?: return null
+        val list = when (value) {
+            is List<*> -> value
+            is Array<*> -> value.toList()
+            else -> return null
+        }
+        if (list.size < 2) return null
+        val scaler = numericValue(list[0])?.toInt() ?: return null
+        val unitCode = numericValue(list[1])?.toInt() ?: return null
+        val unitName = preferredIndianUnitName(resolveDlmsUnit(unitCode))
+        return ScalerUnit(scaler, unitCode, unitName)
+    }
+
+    private fun applyScaler(value: Any?, scalerUnit: ScalerUnit?): Any? {
+        val number = numericValue(value) ?: return value
+        val scaler = scalerUnit ?: return value
+        val scaled = number * Math.pow(10.0, scaler.scaler.toDouble())
+        return if (scaler.unitName == "none") {
+            trimDouble(scaled)
+        } else {
+            "${trimDouble(scaled)} ${scaler.unitName}"
+        }
+    }
+
+    private fun visualRowFromValue(label: String, value: Any?, rawValue: Any? = null): DlmsVisualRow {
+        val kind = when (value) {
+            is Boolean -> DlmsVisualKind.BOOLEAN
+            is Byte, is Short, is Int, is Long, is Float, is Double -> DlmsVisualKind.NUMBER
+            is ByteArray -> when (value.size) {
+                4, 5, 12 -> DlmsVisualKind.DATE_TIME
+                else -> DlmsVisualKind.HEX
+            }
+            is List<*>, is Array<*> -> DlmsVisualKind.STRUCTURE
+            is GXDateTime -> DlmsVisualKind.DATE_TIME
+            else -> DlmsVisualKind.TEXT
+        }
+        return DlmsVisualRow(
+            label = label,
+            value = formatValue(value),
+            kind = kind,
+            raw = rawValue?.let { formatValue(it) }
+        )
+    }
+
+    private fun captureObjectsToTable(value: Any?): DlmsProfileTable? {
+        val rows = flattenTopLevel(value).mapIndexed { index, item ->
+            val cells = flattenTopLevel(item).map { formatValue(it, true) }
+            listOf((index + 1).toString()) + cells
+        }
+        if (rows.isEmpty()) return null
+        val maxCells = rows.maxOf { it.size }
+        val columns = (0 until maxCells).map { idx ->
+            when (idx) {
+                0 -> "#"
+                1 -> "Class"
+                2 -> "OBIS"
+                3 -> "Attribute"
+                4 -> "Data index"
+                else -> "Value $idx"
+            }
+        }
+        return DlmsProfileTable(columns, rows.map { it + List(maxCells - it.size) { "" } })
+    }
+
+    private data class CaptureColumn(
+        val classId: Int?,
+        val obisCode: String,
+        val attribute: Int?,
+        val dataIndex: Int?,
+        val name: String
+    ) {
+        val heading: String
+            get() = listOf(
+                obisCode,
+                if (attribute == 2) "Value" else "Attribute ${attribute ?: "-"}",
+                name
+            ).joinToString("\n")
+    }
+
+    private fun captureObjectsToColumns(value: Any?): List<CaptureColumn> {
+        return flattenTopLevel(value).mapNotNull { item ->
+            val cells = flattenTopLevel(item)
+            if (cells.size < 4) return@mapNotNull null
+            val captureClassId = numericValue(cells[0])?.toInt()
+            val captureObis = formatLogicalName(cells[1])
+            val attribute = numericValue(cells[2])?.toInt()
+            val dataIndex = numericValue(cells[3])?.toInt()
+            CaptureColumn(
+                classId = captureClassId,
+                obisCode = captureObis,
+                attribute = attribute,
+                dataIndex = dataIndex,
+                name = resolveObisDisplayName(captureObis, captureClassId ?: 0)
+                    ?: resolveClassName(captureClassId ?: 0)
+            )
+        }
+    }
+
+    private fun captureColumnsToTable(columns: List<CaptureColumn>): DlmsProfileTable? {
+        if (columns.isEmpty()) return null
+        return DlmsProfileTable(
+            columns = listOf("#", "Class", "OBIS", "Attribute", "Data index", "Name"),
+            rows = columns.mapIndexed { index, column ->
+                listOf(
+                    (index + 1).toString(),
+                    column.classId?.toString() ?: "-",
+                    column.obisCode,
+                    column.attribute?.toString() ?: "-",
+                    column.dataIndex?.toString() ?: "-",
+                    column.name
+                )
+            }
+        )
+    }
+
+    private fun profileBufferToTable(columns: List<CaptureColumn>, buffer: Any?): DlmsProfileTable {
+        val headings = if (columns.isEmpty()) {
+            listOf("Value")
+        } else {
+            columns.map { it.heading }
+        }
+        val rows = flattenTopLevel(buffer).mapIndexed { index, row ->
+            val values = flattenTopLevel(row).ifEmpty { listOf(row) }.map { formatValue(it, true) }
+            listOf(if (index == 0) "▶" else "") + values + List((headings.size - values.size).coerceAtLeast(0)) { "" }
+        }
+        return DlmsProfileTable(
+            columns = listOf("") + headings,
+            rows = rows.ifEmpty { listOf(listOf("") + List(headings.size) { "" }) }
+        )
+    }
+
+    private fun formatLogicalName(value: Any?): String {
+        val bytes = value as? ByteArray
+        if (bytes != null && bytes.size == 6) {
+            return bytes.joinToString(".") { (it.toInt() and 0xFF).toString() }
+        }
+        return formatValue(value, true)
+    }
+
+    private fun flattenTopLevel(value: Any?): List<Any?> {
+        return when (value) {
+            is List<*> -> value
+            is Array<*> -> value.toList()
+            else -> emptyList()
+        }
+    }
+
+    private fun numericValue(value: Any?): Double? = when (value) {
+        is Byte -> value.toDouble()
+        is Short -> value.toDouble()
+        is Int -> value.toDouble()
+        is Long -> value.toDouble()
+        is Float -> value.toDouble()
+        is Double -> value
+        else -> value?.toString()?.toDoubleOrNull()
+    }
+
+    private fun trimDouble(value: Double): String {
+        return if (value % 1.0 == 0.0) value.toLong().toString() else "%.6f".format(Locale.US, value).trimEnd('0').trimEnd('.')
+    }
+
 
     fun executeGet(
         op: OperationItem,
         onTrafficLogged: (requestHex: String, responseHex: String) -> Unit
-    ): String {
+    ): String = operationLock.withLock {
+        transport.flush()
         Log.d(TAG, "Execute GET: ${op.name} (OBIS: ${op.obis}, Class: ${op.classId})")
         val attribute = op.attribute ?: 2
         val cosemObj = createCosemObject(op.classId, op.obis)
@@ -398,7 +875,8 @@ class DlmsEngine(
     fun executeSet(
         op: OperationItem,
         onTrafficLogged: (requestHex: String, responseHex: String) -> Unit
-    ) {
+    ) = operationLock.withLock {
+        transport.flush()
         Log.d(TAG, "Execute SET: ${op.name} (OBIS: ${op.obis}, Value: ${op.value})")
         val attribute = op.attribute ?: 2
         val valueJson = op.value ?: throw IllegalArgumentException("Set operation must specify 'value'")
@@ -425,7 +903,8 @@ class DlmsEngine(
     fun executeAction(
         op: OperationItem,
         onTrafficLogged: (requestHex: String, responseHex: String) -> Unit
-    ) {
+    ) = operationLock.withLock {
+        transport.flush()
         Log.d(TAG, "Execute ACTION: ${op.name} (OBIS: ${op.obis}, Method: ${op.method})")
         val method = op.method ?: 1
         val paramsJson = op.params
@@ -460,12 +939,14 @@ class DlmsEngine(
         val rd = GXByteBuffer()
         val buffer = ByteArray(4096)
         val startTime = System.currentTimeMillis()
-        val timeoutMs = 10000 // Increased to 10s as requested
+        val timeoutMs = readTimeoutMs
         var attempt = 0
         var succeeded = false
 
         if (!reply.streaming) {
-            Log.d(TAG, "TX: ${bytesToHex(data)}")
+            val txHex = bytesToHex(data)
+            Log.d(TAG, "TX: $txHex")
+            logRawFrame("TX", txHex)
             transport.write(data)
         }
 
@@ -485,7 +966,9 @@ class DlmsEngine(
             if (bytesRead > 0) {
                 val rxPart = ByteArray(bytesRead)
                 System.arraycopy(buffer, 0, rxPart, 0, bytesRead)
-                Log.d(TAG, "RX: ${bytesToHex(rxPart)}")
+                val rxHex = bytesToHex(rxPart)
+                Log.d(TAG, "RX: $rxHex")
+                logRawFrame("RX", rxHex)
                 
                 rd.set(buffer, 0, bytesRead)
                 if (activeClient.getData(rd, reply, notify)) {
@@ -493,19 +976,30 @@ class DlmsEngine(
                 }
             } else {
                 if (System.currentTimeMillis() - startTime > timeoutMs) {
-                    if (attempt++ >= 3) {
+                    if (attempt++ >= retryCount) {
                         Log.e(TAG, "Max attempts reached. No reply.")
                         throw IOException("Failed to receive reply from the device in given time.")
                     }
                     // Retransmit
                     if (!reply.streaming) {
                         Log.w(TAG, "Timeout. Retransmitting TX...")
+                        logRawFrame("TX", bytesToHex(data))
                         transport.write(data)
                     }
                 }
                 Thread.sleep(50)
             }
         }
+    }
+
+    private fun parseWaitTimeMillis(waitTime: String?): Long {
+        val fallback = 10_000L
+        val parts = waitTime?.split(":") ?: return fallback
+        if (parts.size != 3) return fallback
+        val hours = parts[0].toLongOrNull() ?: return fallback
+        val minutes = parts[1].toLongOrNull() ?: return fallback
+        val seconds = parts[2].toLongOrNull() ?: return fallback
+        return ((hours * 3600 + minutes * 60 + seconds) * 1000).coerceAtLeast(1000)
     }
 
     private fun readDataBlock(activeClient: GXDLMSClient, requestList: Array<ByteArray>, reply: GXReplyData) {
@@ -566,11 +1060,11 @@ class DlmsEngine(
 
                 // Class 40 (Push Setup), Attribute 3 (Destination): wrap as transport structure
                 if (classId == 40 && attrOrMethodId == 3) {
-                    return listOf(
-                        gurux.dlms.GXEnum(0),                   // transport_service (TCP)
-                        str.toByteArray(Charsets.US_ASCII),     // destination_address
-                        gurux.dlms.GXEnum(255)                  // message_type
-                    )
+                    val struct = gurux.dlms.GXStructure()
+                    struct.add(gurux.dlms.GXEnum(0))                   // transport_service (0 = TCP)
+                    struct.add(str.toByteArray(Charsets.US_ASCII))     // destination_address (ASCII OctetString)
+                    struct.add(gurux.dlms.GXEnum(0))                   // message_type (0 = DLMS APDU)
+                    return struct
                 }
 
                 // Class 8 (Clock): parse ISO date-time string
@@ -845,14 +1339,34 @@ class DlmsEngine(
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
+    private fun logRawFrame(direction: String, hex: String) {
+        onRawFrame?.invoke(direction, hex)
+    }
+
     private fun maskPasswordsInHex(hex: String): String {
-        val pwd = connectionParams.password ?: return hex
-        val pwdHex = hexToBytes(pwd).joinToString("") { "%02x".format(it) }
-        
-        if (pwdHex.length >= 4 && hex.contains(pwdHex)) {
-            val mask = "*".repeat(pwdHex.length)
-            return hex.replace(pwdHex, mask)
+        var masked = hex
+        val keysToMask = listOfNotNull(
+            connectionParams.password,
+            connectionParams.authenticationKey,
+            connectionParams.blockCipherKey,
+            connectionParams.encryptionKey
+        )
+
+        for (key in keysToMask) {
+            if (key.isBlank()) continue
+            val cleanKey = key.replace(" ", "")
+            if (cleanKey.length >= 4 && masked.contains(cleanKey, ignoreCase = true)) {
+                val mask = "*".repeat(cleanKey.length)
+                masked = masked.replace(cleanKey, mask, ignoreCase = true)
+            }
+            try {
+                val asciiHex = cleanKey.toByteArray(Charsets.US_ASCII).joinToString("") { "%02x".format(it) }
+                if (asciiHex.length >= 4 && masked.contains(asciiHex, ignoreCase = true)) {
+                    val mask = "*".repeat(asciiHex.length)
+                    masked = masked.replace(asciiHex, mask, ignoreCase = true)
+                }
+            } catch (ignored: Exception) {}
         }
-        return hex
+        return masked
     }
 }

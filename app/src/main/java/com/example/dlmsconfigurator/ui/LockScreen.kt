@@ -14,18 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -44,14 +43,7 @@ fun LockScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF1E1E2F),
-                        Color(0xFF0F0F1A)
-                    )
-                )
-            ),
+            .background(Color(0xFFF4F7F7)),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -66,14 +58,14 @@ fun LockScreen(
                 Box(
                     modifier = Modifier
                         .size(80.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFFFF3B30).copy(alpha = 0.15f)),
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFFBE9EA)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Warning,
                         contentDescription = "Security Alert",
-                        tint = Color(0xFFFF3B30),
+                        tint = Color(0xFFD71920),
                         modifier = Modifier.size(44.dp)
                     )
                 }
@@ -82,7 +74,7 @@ fun LockScreen(
 
                 Text(
                     text = "Security Setup Required",
-                    color = Color.White,
+                    color = Color(0xFF0F2527),
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -92,7 +84,7 @@ fun LockScreen(
 
                 Text(
                     text = "This application requires the device to have a secure lock screen configured (Biometric, PIN, Pattern, or Password) to protect sensitive meter credentials.\n\nPlease enable security in system settings.",
-                    color = Color.LightGray,
+                    color = Color(0xFF5E7375),
                     fontSize = 15.sp,
                     textAlign = TextAlign.Center,
                     lineHeight = 22.sp
@@ -105,8 +97,8 @@ fun LockScreen(
                         val intent = Intent(Settings.ACTION_SECURITY_SETTINGS)
                         context.startActivity(intent)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007AFF)),
-                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006C6F)),
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Text("Open System Security Settings", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
@@ -116,10 +108,10 @@ fun LockScreen(
 
                 Button(
                     onClick = onCheckSecurity,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White).copy(
-                        containerColor = Color.Transparent
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF006C6F)).copy(
+                        containerColor = Color.White
                     ),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Text("Check Security Enrolment Again", fontWeight = FontWeight.Normal, fontSize = 16.sp)
@@ -129,14 +121,14 @@ fun LockScreen(
                 Box(
                     modifier = Modifier
                         .size(80.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF007AFF).copy(alpha = 0.15f)),
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFDDEDEE)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Lock,
+                        imageVector = Icons.Default.Router,
                         contentDescription = "App Locked",
-                        tint = Color(0xFF007AFF),
+                        tint = Color(0xFF006C6F),
                         modifier = Modifier.size(44.dp)
                     )
                 }
@@ -144,8 +136,8 @@ fun LockScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = "DLMS Configurator Locked",
-                    color = Color.White,
+                    text = "DLMS Reader Locked",
+                    color = Color(0xFF0F2527),
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -155,7 +147,7 @@ fun LockScreen(
 
                 Text(
                     text = "Authenticate using your device's biometric sensor or security PIN to unlock the application.",
-                    color = Color.LightGray,
+                    color = Color(0xFF5E7375),
                     fontSize = 15.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -166,8 +158,8 @@ fun LockScreen(
 
                 Button(
                     onClick = onAuthenticate,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007AFF)),
-                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006C6F)),
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Text("Unlock App", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)

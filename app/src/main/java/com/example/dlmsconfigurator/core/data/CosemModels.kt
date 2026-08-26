@@ -10,6 +10,9 @@ data class ConnectionParams(
     @SerialName("baud_rate") val baudRate: Int = 9600,
     @SerialName("client_address") val clientAddress: Int = 16,
     @SerialName("server_address") val serverAddress: Int = 1,
+    @SerialName("address_type") val addressType: String = "Default",
+    @SerialName("logical_server") val logicalServer: Int = 0,
+    @SerialName("physical_server") val physicalServer: Int = 1,
     @SerialName("security") val security: String = "none",
     @SerialName("password") val password: String? = null,
     @SerialName("interface") val interfaceType: String = "HDLC",
@@ -35,7 +38,8 @@ data class ConnectionParams(
     @SerialName("push_serverv4_ip") val pushServerV4Ip: String? = null,
     @SerialName("push_serverv6_port") val pushServerV6Port: Int? = null,
     @SerialName("push_serverv4_port") val pushServerV4Port: Int? = null,
-    @SerialName("use_invocation_counter") val useInvocationCounter: Int? = 1
+    @SerialName("use_invocation_counter") val useInvocationCounter: Int? = 1,
+    @SerialName("invocation_counter") val invocationCounterInitial: Long? = 0
 ) {
     val isUseInvocationCounter: Boolean get() = (useInvocationCounter ?: 1) != 0
 }

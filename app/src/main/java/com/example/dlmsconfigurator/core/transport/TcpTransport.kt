@@ -18,8 +18,10 @@ class TcpTransport(
     override fun open() {
         if (socket != null) return
         
-        // Handle IPv6 bracketed hosts if passed manually
-        val cleanHost = host.removePrefix("[").removeSuffix("]")
+        val cleanHost = normalizeHost(host)
+        if (isLinkLocalIpv6WithoutScope(cleanHost)) {
+            throw IOException("IPv6 link-local TCP host requires an interface scope, for example $cleanHost%wlan0")
+        }
         
         val newSocket = Socket()
         try {
@@ -33,6 +35,20 @@ class TcpTransport(
             try { newSocket.close() } catch (ignored: Exception) {}
             throw IOException("TCP connection to $host:$port failed: ${e.message}", e)
         }
+    }
+
+    private fun normalizeHost(value: String): String {
+        val trimmed = value.trim()
+        return if (trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length > 2) {
+            trimmed.substring(1, trimmed.length - 1)
+        } else {
+            trimmed
+        }
+    }
+
+    private fun isLinkLocalIpv6WithoutScope(value: String): Boolean {
+        val addressText = value.substringBefore('%')
+        return !value.contains("%") && addressText.startsWith("fe80:", ignoreCase = true)
     }
 
     override fun close() {

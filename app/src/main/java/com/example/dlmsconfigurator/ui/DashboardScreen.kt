@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -80,8 +81,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.dlmsconfigurator.core.data.DataRepository
+import com.example.dlmsconfigurator.core.data.OperationEntity
 import com.example.dlmsconfigurator.core.data.SessionEntity
 import com.example.dlmsconfigurator.core.data.StagedFile
+import com.example.dlmsconfigurator.core.data.commSettings
+import com.example.dlmsconfigurator.core.data.transportLabel
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -91,8 +95,8 @@ import java.io.InputStreamReader
 fun DashboardScreen(
     repository: DataRepository,
     onExecute: (String) -> Unit,
-    onSetup: (String) -> Unit,
-    onViewHistoryDetail: (Long) -> Unit
+    onViewHistoryDetail: (Long) -> Unit,
+    onOpenDevices: () -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -159,9 +163,22 @@ fun DashboardScreen(
                     icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
                     label = { Text("Settings", fontSize = 12.sp) },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color(0xFF007AFF),
+                        selectedIconColor = Color(0xFF2D7DD2),
                         unselectedIconColor = Color.Gray,
-                        selectedTextColor = Color(0xFF007AFF),
+                        selectedTextColor = Color(0xFF2D7DD2),
+                        unselectedTextColor = Color.Gray,
+                        indicatorColor = Color(0xFF1E1E2F)
+                    )
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    icon = { Icon(Icons.Default.Router, contentDescription = "Devices") },
+                    label = { Text("Devices", fontSize = 12.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color(0xFF2D7DD2),
+                        unselectedIconColor = Color.Gray,
+                        selectedTextColor = Color(0xFF2D7DD2),
                         unselectedTextColor = Color.Gray,
                         indicatorColor = Color(0xFF1E1E2F)
                     )
@@ -202,7 +219,6 @@ fun DashboardScreen(
                     stagedFiles = stagedFiles,
                     onImportClick = { launcher.launch(arrayOf("application/json", "*/*")) },
                     onRun = onExecute,
-                    onSetup = onSetup,
                     onDelete = { repository.removeStagedFile(it) },
                     onClearAll = { repository.clearStagedFiles() },
                     onResetDefaults = { repository.resetToDefaultTemplates() }
@@ -214,6 +230,10 @@ fun DashboardScreen(
                 2 -> SettingsTab(
                     repository = repository
                 )
+                3 -> DevicesTab(
+                    repository = repository,
+                    onOpenDevices = onOpenDevices
+                )
             }
         }
     }
@@ -224,7 +244,6 @@ fun ImportTab(
     stagedFiles: List<StagedFile>,
     onImportClick: () -> Unit,
     onRun: (String) -> Unit,
-    onSetup: (String) -> Unit,
     onDelete: (String) -> Unit,
     onClearAll: () -> Unit,
     onResetDefaults: () -> Unit
@@ -297,7 +316,6 @@ fun ImportTab(
                     StagedFileCard(
                         file = file,
                         onRun = { onRun(file.id) },
-                        onCustomize = { onSetup(file.id) },
                         onDelete = { onDelete(file.id) }
                     )
                 }
@@ -310,7 +328,6 @@ fun ImportTab(
 fun StagedFileCard(
     file: StagedFile,
     onRun: () -> Unit,
-    onCustomize: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
@@ -371,17 +388,6 @@ fun StagedFileCard(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    Button(
-                        onClick = onCustomize,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White).copy(
-                            containerColor = Color.Transparent
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.padding(end = 10.dp)
-                    ) {
-                        Text("Customize")
-                    }
-
                     Button(
                         onClick = onRun,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759)),
@@ -514,7 +520,6 @@ fun SettingsTab(
     repository: DataRepository
 ) {
     val scope = rememberCoroutineScope()
-    var defaultBaud by remember { mutableStateOf(repository.getDefaultBaudRate().toString()) }
     var detailedLogging by remember { mutableStateOf(repository.getDefaultLoggingLevel()) }
     var selectedTheme by remember { mutableStateOf(repository.getAppTheme()) }
 
@@ -525,37 +530,7 @@ fun SettingsTab(
             .fillMaxSize()
             .padding(horizontal = 20.dp)
     ) {
-        item {
-                    Text(
-                        text = "Default Parameters",
-                        color = Color(0xFF007AFF),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
 
-                item {
-                    OutlinedTextField(
-                        value = defaultBaud,
-                        onValueChange = {
-                            defaultBaud = it
-                            it.toIntOrNull()?.let { b -> repository.setDefaultBaudRate(b) }
-                        },
-                        label = { Text("Default Baud Rate") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color(0xFF1E1E2F),
-                            unfocusedContainerColor = Color(0xFF1E1E2F),
-                            focusedLabelColor = Color(0xFF007AFF),
-                            unfocusedLabelColor = Color.Gray
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
 
                 item {
                     Row(
@@ -731,5 +706,138 @@ private fun readUriContent(context: android.content.Context, uri: Uri): String? 
         stringBuilder.toString()
     } catch (e: Exception) {
         null
+    }
+}
+
+@Composable
+fun DevicesTab(
+    repository: DataRepository,
+    onOpenDevices: () -> Unit
+) {
+    val devices by repository.getDevicesFlow().collectAsState(initial = emptyList())
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Header card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C2E)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                Brush.radialGradient(listOf(Color(0xFF2D7DD2), Color(0xFF1A4A80))),
+                                RoundedCornerShape(12.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Router,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Text(
+                            "Device Manager",
+                            color = Color(0xFFEEEEEE),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "${devices.size} device${if (devices.size == 1) "" else "s"} saved",
+                            color = Color(0xFF9999AA),
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "Connect directly to a meter — save device profiles, browse COSEM objects, and issue GET / SET / ACTION commands without a script file.",
+                    color = Color(0xFF9999AA),
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onOpenDevices,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2D7DD2)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Router, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Open Device Manager", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
+        // Quick summary if devices exist
+        if (devices.isNotEmpty()) {
+            Text(
+                "Recent Devices",
+                color = Color(0xFF9999AA),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            )
+            devices.take(3).forEach { device ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF12121E)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(Color(0xFF22223A), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Router, contentDescription = null, tint = Color(0xFF2D7DD2), modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(device.name, color = Color(0xFFEEEEEE), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                buildString {
+                                    when (val c = device.commSettings) {
+                                        is com.example.dlmsconfigurator.core.data.CommSettings.Otg -> append("OTG · ${c.baudRate} baud")
+                                        is com.example.dlmsconfigurator.core.data.CommSettings.Ble -> append("BLE · ${c.deviceName.ifBlank { c.deviceAddress }}")
+                                        is com.example.dlmsconfigurator.core.data.CommSettings.Tcp -> append("TCP · ${c.host}:${c.port}")
+                                    }
+                                },
+                                color = Color(0xFF9999AA),
+                                fontSize = 12.sp
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFF22223A), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                device.transportLabel,
+                                color = Color(0xFF2D7DD2),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

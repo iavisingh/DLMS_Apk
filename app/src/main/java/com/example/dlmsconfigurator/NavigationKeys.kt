@@ -13,6 +13,10 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class UsbConnect(
     val stagedFileId: String,
+    val transportType: String = "usb", // "usb", "ble", "tcp"
+    val bleDeviceAddress: String? = null,
+    val tcpHost: String? = null,
+    val tcpPort: Int? = null,
     val overrideBaud: Int? = null,
     val overrideClient: Int? = null,
     val overrideServer: Int? = null,
@@ -42,4 +46,22 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class OperationDetail(
     val operationId: Long
+) : NavKey
+
+// ── Device-centric flow ───────────────────────────────────────────────────────
+
+/** Top-level device list (entry point from Dashboard "Devices" tab). */
+@Serializable data object DeviceList : NavKey
+
+/** Add (deviceId = null) or edit (deviceId = existing row id) a device profile. */
+@Serializable data class AddEditDevice(val deviceId: Long? = null) : NavKey
+
+/** Live device session — auto-connects on enter. */
+@Serializable data class DeviceSession(val deviceId: Long) : NavKey
+
+/** COSEM object detail — GET / SET / ACTION tabs for a specific object. */
+@Serializable data class ObjectDetail(
+    val deviceId: Long,
+    val obisCode: String,
+    val classId: Int
 ) : NavKey

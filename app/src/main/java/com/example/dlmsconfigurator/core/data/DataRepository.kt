@@ -40,6 +40,31 @@ interface DataRepository {
     fun setDefaultLoggingLevel(detailed: Boolean)
     fun getAppTheme(): String
     fun setAppTheme(theme: String)
+
+    // ── Device management ────────────────────────────────────────────────────
+    fun getDevicesFlow(): Flow<List<DeviceEntity>>
+    suspend fun getDevice(id: Long): DeviceEntity?
+    /**
+     * Saves a device record. Secrets (password, authKey, encKey, systemTitle) should be
+     * passed in the [secrets] map with keys: "password", "authKey", "encKey", "systemTitle".
+     * They will be stored in SecureKeyStore and the aliases will be written into the entity.
+     * Returns the new row id.
+     */
+    suspend fun addDevice(device: DeviceEntity, secrets: Map<String, String> = emptyMap()): Long
+    suspend fun updateDevice(device: DeviceEntity, secrets: Map<String, String> = emptyMap())
+    suspend fun deleteDevice(device: DeviceEntity)
+    suspend fun touchDeviceConnected(id: Long, meterSerial: String? = null)
+    suspend fun ensureDefaultDevices()
+
+    // ── Association object cache ─────────────────────────────────────────────
+    fun getAssociationObjectsFlow(deviceId: Long): Flow<List<AssociationObjectEntity>>
+    suspend fun getAssociationObjects(deviceId: Long): List<AssociationObjectEntity>
+    suspend fun saveAssociationObjects(deviceId: Long, objects: List<AssociationObjectEntity>)
+    suspend fun clearAssociationObjects(deviceId: Long)
+    suspend fun hasAssociationCache(deviceId: Long): Boolean
+
+    // ── Device secret resolution ─────────────────────────────────────────────
+    fun resolveDeviceSecret(alias: String?): String?
 }
 
 class DefaultDataRepository(private val context: Context) : DataRepository {
@@ -48,6 +73,8 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
     private val sessionDao = database.sessionDao()
     private val operationDao = database.operationDao()
     private val authEventDao = database.authEventDao()
+    private val deviceDao = database.deviceDao()
+    private val assocObjectDao = database.associationObjectDao()
 
     private val _stagedFiles = MutableStateFlow<List<StagedFile>>(emptyList())
     override val stagedFiles = _stagedFiles.asStateFlow()
@@ -178,6 +205,155 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
         sharedPrefs.edit().putString("app_theme", theme).apply()
     }
 
+    // ── Device management ────────────────────────────────────────────────────
+
+    override fun getDevicesFlow(): Flow<List<DeviceEntity>> = deviceDao.getAllDevicesFlow()
+
+    override suspend fun getDevice(id: Long): DeviceEntity? = withContext(Dispatchers.IO) {
+        deviceDao.getById(id)
+    }
+
+    override suspend fun addDevice(device: DeviceEntity, secrets: Map<String, String>): Long = withContext(Dispatchers.IO) {
+        val id = deviceDao.insert(device.copy(id = 0)) // let autoGenerate assign id
+        storeSecrets(id, secrets, device)
+        // Now update the entity to carry the key-refs
+        val withRefs = buildDeviceWithRefs(deviceDao.getById(id)!!, id, secrets)
+        deviceDao.update(withRefs)
+        id
+    }
+
+    override suspend fun updateDevice(device: DeviceEntity, secrets: Map<String, String>) = withContext(Dispatchers.IO) {
+        storeSecrets(device.id, secrets, device)
+        val withRefs = buildDeviceWithRefs(device, device.id, secrets)
+        deviceDao.update(withRefs)
+    }
+
+    override suspend fun deleteDevice(device: DeviceEntity) = withContext(Dispatchers.IO) {
+        // Delete secrets from keystore
+        listOf(device.passwordKeyRef, device.systemTitleKeyRef, device.authKeyRef, device.encKeyRef)
+            .filterNotNull()
+            .forEach { secureKeyStore.deleteDeviceSecret(it) }
+        // Row + cascade-deletes association_objects
+        deviceDao.delete(device)
+    }
+
+    override suspend fun touchDeviceConnected(id: Long, meterSerial: String?) = withContext(Dispatchers.IO) {
+        deviceDao.touchLastConnected(id, System.currentTimeMillis())
+        if (meterSerial != null) {
+            deviceDao.updateMeterSerial(id, meterSerial)
+        }
+    }
+
+    override suspend fun ensureDefaultDevices() = withContext(Dispatchers.IO) {
+        if (deviceDao.getByName("Genus US") == null) {
+            addDevice(
+                DeviceEntity(
+                    name = "Genus US",
+                    commSettingsJson = CommSettings.toJson(CommSettings.Otg(baudRate = 9600)),
+                    authenticationRole = "US",
+                    logicalNameReferencing = true,
+                    clientAddress = 48,
+                    addressType = "Default",
+                    logicalServer = 0,
+                    physicalServer = 1,
+                    serverAddress = 1,
+                    securitySuite = "Suite0",
+                    security = "authenticationencryption",
+                    ciphering = true,
+                    invocationCounterInitial = 0,
+                    invocationCounterObis = "0.0.43.1.3.255",
+                    useInvocationCounter = true,
+                    retryCount = 3,
+                    retryIntervalMs = 1000
+                ),
+                secrets = mapOf(
+                    "password" to asciiToHex("AeMlHlSugaPl01ab"),
+                    "systemTitle" to asciiToHex("GOE00000"),
+                    "authKey" to asciiToHex("AeMlEkAkgaPl01ab"),
+                    "encKey" to asciiToHex("AeMlEkAkgaPl01ab")
+                )
+            )
+        }
+
+        if (deviceDao.getByName("LnG") == null) {
+            addDevice(
+                DeviceEntity(
+                    name = "LnG",
+                    commSettingsJson = CommSettings.toJson(CommSettings.Otg(baudRate = 9600)),
+                    authenticationRole = "US",
+                    logicalNameReferencing = true,
+                    clientAddress = 48,
+                    addressType = "Default",
+                    logicalServer = 0,
+                    physicalServer = 1,
+                    serverAddress = 1,
+                    securitySuite = "Suite0",
+                    security = "authenticationencryption",
+                    ciphering = true,
+                    invocationCounterInitial = 0,
+                    invocationCounterObis = "0.0.43.1.3.255",
+                    useInvocationCounter = true,
+                    retryCount = 3,
+                    retryIntervalMs = 5000
+                ),
+                secrets = mapOf(
+                    "password" to cleanHex("0x000102030405060708090A0B0C0D0E0F"),
+                    "systemTitle" to asciiToHex("ESYA0000"),
+                    "authKey" to cleanHex("0x000102030405060708090A0B0C0D0E0F"),
+                    "encKey" to cleanHex("0x000102030405060708090A0B0C0D0E0F")
+                )
+            )
+        }
+    }
+
+    private fun storeSecrets(deviceId: Long, secrets: Map<String, String>, existing: DeviceEntity) {
+        // Only write secrets that are non-blank in the incoming map
+        secrets["password"]?.takeIf { it.isNotBlank() }
+            ?.let { secureKeyStore.storeDeviceSecret("dev_${deviceId}_password", it) }
+        secrets["authKey"]?.takeIf { it.isNotBlank() }
+            ?.let { secureKeyStore.storeDeviceSecret("dev_${deviceId}_authKey", it) }
+        secrets["encKey"]?.takeIf { it.isNotBlank() }
+            ?.let { secureKeyStore.storeDeviceSecret("dev_${deviceId}_encKey", it) }
+        secrets["systemTitle"]?.takeIf { it.isNotBlank() }
+            ?.let { secureKeyStore.storeDeviceSecret("dev_${deviceId}_systemTitle", it) }
+    }
+
+    private fun buildDeviceWithRefs(device: DeviceEntity, deviceId: Long, secrets: Map<String, String>): DeviceEntity {
+        return device.copy(
+            passwordKeyRef = if (secrets["password"]?.isNotBlank() == true) "dev_${deviceId}_password" else device.passwordKeyRef,
+            authKeyRef = if (secrets["authKey"]?.isNotBlank() == true) "dev_${deviceId}_authKey" else device.authKeyRef,
+            encKeyRef = if (secrets["encKey"]?.isNotBlank() == true) "dev_${deviceId}_encKey" else device.encKeyRef,
+            systemTitleKeyRef = if (secrets["systemTitle"]?.isNotBlank() == true) "dev_${deviceId}_systemTitle" else device.systemTitleKeyRef
+        )
+    }
+
+    // ── Association object cache ─────────────────────────────────────────────
+
+    override fun getAssociationObjectsFlow(deviceId: Long): Flow<List<AssociationObjectEntity>> =
+        assocObjectDao.getByDeviceIdFlow(deviceId)
+
+    override suspend fun getAssociationObjects(deviceId: Long): List<AssociationObjectEntity> = withContext(Dispatchers.IO) {
+        assocObjectDao.getByDeviceId(deviceId)
+    }
+
+    override suspend fun saveAssociationObjects(deviceId: Long, objects: List<AssociationObjectEntity>) = withContext(Dispatchers.IO) {
+        assocObjectDao.deleteByDeviceId(deviceId)
+        assocObjectDao.insertAll(objects)
+    }
+
+    override suspend fun clearAssociationObjects(deviceId: Long) = withContext(Dispatchers.IO) {
+        assocObjectDao.deleteByDeviceId(deviceId)
+    }
+
+    override suspend fun hasAssociationCache(deviceId: Long): Boolean = withContext(Dispatchers.IO) {
+        assocObjectDao.countByDeviceId(deviceId) > 0
+    }
+
+    override fun resolveDeviceSecret(alias: String?): String? {
+        if (alias.isNullOrBlank()) return null
+        return secureKeyStore.getDeviceSecret(alias)
+    }
+
     override fun resetToDefaultTemplates() {
         val defaultTemplates = listOf(
             createTemplate(
@@ -255,32 +431,6 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
                       ]
                     }
                 """.trimIndent()
-            ),
-            createTemplate(
-                name = "Read Meter Clock (Public Client)",
-                jsonContent = """
-                    {
-                      "connection": {
-                        "baud_rate": 9600,
-                        "client_address": 16,
-                        "server_address": 1,
-                        "security": "none",
-                        "interface": "HDLC"
-                      },
-                      "default_retry": {
-                        "max_attempts": 3,
-                        "delay_ms": 2000
-                      },
-                      "operations": [
-                        {
-                          "type": "get",
-                          "obis": "0.0.1.0.0.255",
-                          "class_id": 8,
-                          "attribute": 2
-                        }
-                      ]
-                    }
-                """.trimIndent()
             )
         )
         _stagedFiles.value = defaultTemplates
@@ -297,4 +447,10 @@ class DefaultDataRepository(private val context: Context) : DataRepository {
             parsedContent = validation.getOrNull()
         )
     }
+
+    private fun asciiToHex(value: String): String =
+        value.toByteArray(Charsets.US_ASCII).joinToString("") { "%02X".format(it) }
+
+    private fun cleanHex(value: String): String =
+        value.removePrefix("0x").removePrefix("0X").replace(" ", "").replace(":", "").uppercase()
 }

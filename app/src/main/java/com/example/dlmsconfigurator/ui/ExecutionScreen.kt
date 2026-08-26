@@ -138,7 +138,9 @@ fun ExecutionScreen(
                             respHex = resp
                         }
                         if (op.obis == "0.0.96.1.0.255" && !decodedVal.isNullOrBlank()) {
-                            discoveredSerial = decodedVal
+                            withContext(Dispatchers.Main) {
+                                discoveredSerial = decodedVal
+                            }
                         }
                         if (!decodedVal.isNullOrBlank()) {
                             val formattedWriteVal = decodedVal!!

@@ -1,0 +1,20 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">DLMS Configurator Meter Signal Logo</title>
+  <desc id="desc">Selected app logo: a simple smart meter face with wireless signal arcs on a deep teal adaptive icon background.</desc>
+  <rect width="1024" height="1024" rx="228" fill="#006C6F"/>
+  <circle cx="512" cy="512" r="390" fill="#00575A"/>
+  <path d="M335 319C335 286.415 361.415 260 394 260H605C637.585 260 664 286.415 664 319V744H335V319Z" fill="#F8FAFA"/>
+  <path d="M374 718H625V744H374V718Z" fill="#D9E4E5"/>
+  <rect x="390" y="356" width="219" height="96" rx="19" fill="#003D40"/>
+  <rect x="412" y="379" width="175" height="50" rx="9" fill="#18A7AD"/>
+  <circle cx="420" cy="548" r="24" fill="#00575A"/>
+  <circle cx="497" cy="548" r="24" fill="#00575A"/>
+  <circle cx="574" cy="548" r="24" fill="#00575A"/>
+  <circle cx="594" cy="635" r="54" fill="#D9F2F3"/>
+  <circle cx="594" cy="635" r="26" fill="#00868B"/>
+  <path d="M682 295C742.751 319.811 791.189 368.249 816 429" stroke="#F8FAFA" stroke-width="46" stroke-linecap="round"/>
+  <path d="M711 215C796.321 249.849 864.151 317.679 899 403" stroke="#D9F2F3" stroke-width="46" stroke-linecap="round"/>
+  <path d="M650 380C689.147 395.991 720.009 426.853 736 466" stroke="#40D0D4" stroke-width="42" stroke-linecap="round"/>
+  <path d="M259 345C224.138 401.313 204 467.708 204 539C204 610.292 224.138 676.687 259 733" stroke="#D9F2F3" stroke-width="30" stroke-linecap="round"/>
+  <path d="M295 300C252.959 360.611 228 434.413 228 514" stroke="#F8FAFA" stroke-width="22" stroke-linecap="round"/>
+</svg>
