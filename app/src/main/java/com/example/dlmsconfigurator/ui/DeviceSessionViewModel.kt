@@ -145,7 +145,7 @@ class DeviceSessionViewModel : ViewModel() {
                 Log.e(TAG, "Connection failed: ${e.message}", e)
                 appendLog("✗ ${e.message ?: "Unknown error"}")
                 try {
-                    activeEngine?.disconnect()
+                    activeEngine?.disconnect { msg -> appendLog(msg) }
                     appendLog("Release / disconnect cleanup sent")
                 } catch (cleanupError: Exception) {
                     Log.w(TAG, "Connection cleanup failed: ${cleanupError.message}")
@@ -166,8 +166,8 @@ class DeviceSessionViewModel : ViewModel() {
         viewModelScope.launch(commDispatcher) {
             appendLog("Disconnecting…")
             try {
-                activeEngine?.disconnect()
-                appendLog("DLMS Release / Disconnect sent")
+                activeEngine?.disconnect { msg -> appendLog(msg) }
+                appendLog("DLMS Release / Disconnect completed")
             } catch (e: Exception) {
                 Log.w(TAG, "Disconnect error: ${e.message}")
                 appendLog("Disconnect cleanup warning: ${e.message}")
@@ -201,6 +201,10 @@ class DeviceSessionViewModel : ViewModel() {
             _isReadingAssocView.value = true
             appendLog("Reading Association View (Class 15)…")
             try {
+                // A refresh is a replacement read: remove stale rows from both UI and Room first.
+                _associationObjects.value = emptyList()
+                repository.clearAssociationObjects(deviceId)
+                appendLog("Cleared cached Association View")
                 val objects = engine.readAssociationView()
                 val entities = objects.map { it.toEntity(deviceId) }
                 repository.saveAssociationObjects(deviceId, entities)

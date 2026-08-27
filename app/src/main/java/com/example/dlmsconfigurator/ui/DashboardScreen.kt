@@ -33,6 +33,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -96,7 +98,8 @@ fun DashboardScreen(
     repository: DataRepository,
     onExecute: (String) -> Unit,
     onViewHistoryDetail: (Long) -> Unit,
-    onOpenDevices: () -> Unit = {}
+    onOpenDevices: () -> Unit = {},
+    onThemeChange: (String) -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -202,16 +205,38 @@ fun DashboardScreen(
                     .fillMaxWidth()
                     .padding(20.dp)
             ) {
-                Text(
-                    text = when (selectedTab) {
-                        0 -> "Staged Operations"
-                        1 -> "Session History"
-                        else -> "App Settings"
-                    },
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = when (selectedTab) {
+                            0 -> "Staged Operations"
+                            1 -> "Session History"
+                            3 -> "Meters"
+                            else -> "App Settings"
+                        },
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    val isDark = repository.getAppTheme() == "DARK"
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            val next = if (isDark) "LIGHT" else "DARK"
+                            onThemeChange(next)
+                        }
+                    ) {
+                        Icon(
+                            if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Theme",
+                            tint = Color.White
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (isDark) "Light" else "Dark", color = Color.White)
+                    }
+                }
             }
 
             when (selectedTab) {
@@ -228,7 +253,8 @@ fun DashboardScreen(
                     onSessionClick = onViewHistoryDetail
                 )
                 2 -> SettingsTab(
-                    repository = repository
+                    repository = repository,
+                    onThemeChange = onThemeChange
                 )
                 3 -> DevicesTab(
                     repository = repository,
@@ -517,7 +543,8 @@ fun HistorySessionCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsTab(
-    repository: DataRepository
+    repository: DataRepository,
+    onThemeChange: (String) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var detailedLogging by remember { mutableStateOf(repository.getDefaultLoggingLevel()) }
@@ -599,6 +626,7 @@ fun SettingsTab(
                                 onClick = {
                                     selectedTheme = "SYSTEM"
                                     repository.setAppTheme("SYSTEM")
+                                    onThemeChange("SYSTEM")
                                     expanded = false
                                 }
                             )
@@ -607,6 +635,7 @@ fun SettingsTab(
                                 onClick = {
                                     selectedTheme = "LIGHT"
                                     repository.setAppTheme("LIGHT")
+                                    onThemeChange("LIGHT")
                                     expanded = false
                                 }
                             )
@@ -615,6 +644,7 @@ fun SettingsTab(
                                 onClick = {
                                     selectedTheme = "DARK"
                                     repository.setAppTheme("DARK")
+                                    onThemeChange("DARK")
                                     expanded = false
                                 }
                             )

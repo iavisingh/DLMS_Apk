@@ -26,19 +26,27 @@ class MainActivity : FragmentActivity() {
     private var repository: DefaultDataRepository? by mutableStateOf(null)
     private var isLocked by mutableStateOf(true)
     private var hasSecurityLock by mutableStateOf(true)
+    private var selectedTheme by mutableStateOf("SYSTEM")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) {
-                DefaultDataRepository(applicationContext).also { it.ensureDefaultDevices() }
+            DefaultDataRepository(applicationContext).also { it.ensureDefaultDevices() }
             }
             repository = loaded
+            selectedTheme = loaded.getAppTheme()
         }
 
         setContent {
-            DLMSConfiguratorTheme {
+            DLMSConfiguratorTheme(
+                darkTheme = when (selectedTheme) {
+                    "DARK" -> true
+                    "LIGHT" -> false
+                    else -> androidx.compose.foundation.isSystemInDarkTheme()
+                }
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -56,7 +64,10 @@ class MainActivity : FragmentActivity() {
                                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                             }
                         } else {
-                            MainNavigation(repo)
+                            MainNavigation(repo) { theme ->
+                                selectedTheme = theme
+                                repo.setAppTheme(theme)
+                            }
                         }
                     }
                 }

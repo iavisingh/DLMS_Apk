@@ -19,7 +19,7 @@ import com.example.dlmsconfigurator.core.data.DataRepository
 import com.example.dlmsconfigurator.ui.DeviceSessionViewModel
 
 @Composable
-fun MainNavigation(repository: DataRepository) {
+fun MainNavigation(repository: DataRepository, onThemeChange: (String) -> Unit = {}) {
     val backStack = rememberNavBackStack(DeviceList)
     val deviceSessionViewModel: DeviceSessionViewModel = viewModel()
 
@@ -41,7 +41,8 @@ fun MainNavigation(repository: DataRepository) {
                     },
                     onOpenDevices = {
                         backStack.add(DeviceList)
-                    }
+                    },
+                    onThemeChange = onThemeChange
                 )
             }
             entry<SessionSetup> { key ->

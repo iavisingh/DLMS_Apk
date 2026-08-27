@@ -18,6 +18,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
@@ -128,6 +133,9 @@ fun AddEditDeviceScreen(
 
     var isSaving by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
+    val saveInteraction = remember { MutableInteractionSource() }
+    val savePressed by saveInteraction.collectIsPressedAsState()
+    val saveScale by animateFloatAsState(if (savePressed) 0.98f else 1f, label = "saveButtonPress")
 
     // Load existing device if editing
     LaunchedEffect(deviceId) {
@@ -396,10 +404,15 @@ fun AddEditDeviceScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp)
-                        .height(52.dp),
+                        .height(52.dp)
+                        .graphicsLayer {
+                            scaleX = saveScale
+                            scaleY = saveScale
+                        },
                     colors = ButtonDefaults.buttonColors(containerColor = accentBlue),
                     shape = RoundedCornerShape(8.dp),
-                    enabled = !isSaving && deviceName.isNotBlank()
+                    enabled = !isSaving && deviceName.isNotBlank(),
+                    interactionSource = saveInteraction
                 ) {
                     if (isSaving) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
@@ -416,6 +429,7 @@ fun AddEditDeviceScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .animateContentSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),

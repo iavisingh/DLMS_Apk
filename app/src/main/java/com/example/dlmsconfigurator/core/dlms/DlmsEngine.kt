@@ -339,24 +339,43 @@ class DlmsEngine(
         onStatusUpdate?.invoke("DLMS Association Successful!")
     }
 
-    fun disconnect() {
+    fun disconnect(onStatusUpdate: ((String) -> Unit)? = null) = operationLock.withLock {
+        if (!transport.isOpen()) {
+            isAssociated = false
+            return@withLock
+        }
+
         try {
-            Log.d(TAG, "Disconnecting with fire-and-forget RLRQ/DISC...")
-            if (!transport.isOpen()) return
+            if (cachedReleasePackets.isEmpty() && cachedDisconnectPacket == null) cacheDisconnectFrames()
 
-            if (cachedReleasePackets.isEmpty() && cachedDisconnectPacket == null) {
-                cacheDisconnectFrames()
-            }
-
+            // RLRQ is best-effort but response-aware. Some meters legally stay silent here.
             cachedReleasePackets.forEach { packet ->
+                onStatusUpdate?.invoke("Sending DLMS RELEASE…")
                 writeDisconnectFrame("RLRQ", packet)
+                try {
+                    readDisconnectReply()
+                    onStatusUpdate?.invoke("DLMS RELEASE response received")
+                } catch (e: Exception) {
+                    Log.w(TAG, "No RELEASE response; continuing with DISC: ${e.message}")
+                    onStatusUpdate?.invoke("No RELEASE response; continuing with DISCONNECT")
+                }
             }
-            Thread.sleep(200)
 
-            cachedDisconnectPacket?.let { writeDisconnectFrame("DISC", it) }
-            Thread.sleep(300)
-        } catch (ignored: Exception) {
-            Log.w(TAG, "Disconnect cleanup failed: ${ignored.message}")
+            cachedDisconnectPacket?.let { packet ->
+                onStatusUpdate?.invoke("Sending DLMS DISCONNECT…")
+                writeDisconnectFrame("DISC", packet)
+                try {
+                    readDisconnectReply()
+                    onStatusUpdate?.invoke("DLMS DISCONNECT response received")
+                } catch (e: Exception) {
+                    // DISC commonly has no response. The local socket is authoritative after timeout.
+                    Log.w(TAG, "No DISCONNECT response; treating session as closed: ${e.message}")
+                    onStatusUpdate?.invoke("No DISCONNECT response; closing local transport")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Disconnect cleanup failed: ${e.message}")
+            onStatusUpdate?.invoke("Disconnect frame flow ended: ${e.message ?: "transport closed"}")
         } finally {
             transport.close()
             isAssociated = false
@@ -397,6 +416,11 @@ class DlmsEngine(
         } catch (e: Exception) {
             Log.w(TAG, "$label write failed: ${e.message}")
         }
+    }
+
+    private fun readDisconnectReply() {
+        val reply = GXReplyData()
+        readDLMSPacket(client, ByteArray(0), reply, listenOnly = true)
     }
 
     /**
@@ -495,7 +519,8 @@ class DlmsEngine(
     fun readObjectSnapshot(
         classId: Int,
         obisCode: String,
-        profileReadRequest: DlmsProfileReadRequest = DlmsProfileReadRequest()
+        profileReadRequest: DlmsProfileReadRequest = DlmsProfileReadRequest(),
+        onPartialSnapshot: ((DlmsVisualSnapshot) -> Unit)? = null
     ): DlmsVisualSnapshot = operationLock.withLock {
         transport.flush()
         val title = resolveObisDisplayName(obisCode, classId) ?: resolveClassName(classId)
@@ -587,6 +612,18 @@ class DlmsEngine(
                     )
                 )
                 profileCaptureTable = captureColumnsToTable(captureColumns)
+                // Publish the object shape before the potentially large profile buffer arrives.
+                onPartialSnapshot?.invoke(
+                    DlmsVisualSnapshot(
+                        title = title,
+                        classId = classId,
+                        obisCode = obisCode,
+                        sections = sections.toList(),
+                        profileControls = profileControls,
+                        profileTable = profileCaptureTable,
+                        profileCaptureTable = profileCaptureTable
+                    )
+                )
                 profileDataTable = bufferResult.fold(
                     onSuccess = { profileBufferToTable(captureColumns, it) },
                     onFailure = {
@@ -643,7 +680,7 @@ class DlmsEngine(
             }
         }
 
-        DlmsVisualSnapshot(
+        val snapshot = DlmsVisualSnapshot(
             title = title,
             classId = classId,
             obisCode = obisCode,
@@ -653,6 +690,8 @@ class DlmsEngine(
             profileDataTable = profileDataTable,
             profileCaptureTable = profileCaptureTable
         )
+        onPartialSnapshot?.invoke(snapshot)
+        snapshot
     }
 
     private fun readVisualRow(classId: Int, obisCode: String, attribute: Int, label: String): DlmsVisualRow {
@@ -1010,8 +1049,13 @@ class DlmsEngine(
         Log.i(TAG, "ACTION Successful (Response: $responseHex)")
     }
 
-    private fun readDLMSPacket(activeClient: GXDLMSClient, data: ByteArray, reply: GXReplyData) {
-        if (!reply.streaming && data.isEmpty()) return
+    private fun readDLMSPacket(
+        activeClient: GXDLMSClient,
+        data: ByteArray,
+        reply: GXReplyData,
+        listenOnly: Boolean = false
+    ) {
+        if (data.isEmpty() && !listenOnly) return
 
         reply.error = 0
         val eop: Byte? = if (activeClient.interfaceType == InterfaceType.WRAPPER) null else 0x7E.toByte()
@@ -1023,7 +1067,7 @@ class DlmsEngine(
         var attempt = 0
         var succeeded = false
 
-        if (!reply.streaming) {
+        if (!reply.streaming && !listenOnly) {
             val txHex = bytesToHex(data)
             Log.d(TAG, "TX: $txHex")
             logRawFrame("TX", txHex)

@@ -122,7 +122,17 @@ fun ObjectDetailScreen(
         smartError = null
         scope.launch(Dispatchers.IO) {
             try {
-                val snapshot = activeEngine.readObjectSnapshot(classId, obisCode, profileReadRequest)
+                val snapshot = activeEngine.readObjectSnapshot(
+                    classId,
+                    obisCode,
+                    profileReadRequest,
+                    onPartialSnapshot = { partial ->
+                        scope.launch(Dispatchers.Main) {
+                            smartSnapshot = partial
+                            smartError = null
+                        }
+                    }
+                )
                 withContext(Dispatchers.Main) {
                     smartSnapshot = snapshot
                     smartError = null
