@@ -1,5 +1,6 @@
 package com.example.dlmsconfigurator
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -630,6 +631,7 @@ private fun CosemCategoryRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(180))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
@@ -661,6 +663,8 @@ private fun CosemCategoryRow(
                     color = Color(0xFFB7791F),
                     strokeWidth = 2.dp
                 )
+                Spacer(Modifier.width(8.dp))
+                Text("Reading...", color = Color(0xFFB7791F), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(8.dp))
             }
             Text("$count", color = Color(0xFF5E7375), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
@@ -724,6 +728,7 @@ private fun ObjectListItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(160))
             .clickable(enabled = isConnected, onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFAFCFC)),
         shape = RoundedCornerShape(8.dp)

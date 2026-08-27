@@ -1,5 +1,7 @@
 package com.example.dlmsconfigurator
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -762,6 +764,7 @@ private fun VisualRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(160))
             .background(Color(0xFFFAFCFC), RoundedCornerShape(8.dp))
             .padding(10.dp)
     ) {
@@ -815,7 +818,10 @@ private fun ProfileTable(title: String, table: DlmsProfileTable, maxRows: Int) {
     val fromIndex = (page * rowsPerPage).coerceAtMost(table.rows.size)
     val toIndex = (fromIndex + rowsPerPage).coerceAtMost(table.rows.size)
     val visibleRows = table.rows.subList(fromIndex, toIndex)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        modifier = Modifier.animateContentSize(animationSpec = tween(180)),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = Color(0xFF006C6F), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             if (table.rows.size > rowsPerPage) {
@@ -894,7 +900,9 @@ private fun RawTrafficFloatingBar(
     val isTx = latest?.direction == "TX"
     val accent = if (isTx) Color(0xFFB7791F) else Color(0xFF006C6F)
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(160)),
         colors = CardDefaults.cardColors(containerColor = Color(0xEEF8FBFB)),
         shape = RoundedCornerShape(6.dp)
     ) {

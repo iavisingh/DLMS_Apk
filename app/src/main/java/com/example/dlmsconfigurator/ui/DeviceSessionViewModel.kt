@@ -227,13 +227,22 @@ class DeviceSessionViewModel : ViewModel() {
     }
 
     private fun appendRawTraffic(direction: String, hex: String) {
-        _rawTrafficLog.value = (
-            _rawTrafficLog.value + RawTrafficEntry(
-                timestampMs = System.currentTimeMillis(),
+        val now = System.currentTimeMillis()
+        val current = _rawTrafficLog.value
+        val last = current.lastOrNull()
+        val merged = if (last != null && last.direction == direction && now - last.timestampMs <= 120L) {
+            current.dropLast(1) + last.copy(
+                timestampMs = now,
+                hex = last.hex + hex
+            )
+        } else {
+            current + RawTrafficEntry(
+                timestampMs = now,
                 direction = direction,
                 hex = hex
             )
-        ).takeLast(1000)
+        }
+        _rawTrafficLog.value = merged.takeLast(1000)
     }
 
     private fun safeCloseTransport() {
