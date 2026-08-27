@@ -1,6 +1,7 @@
 package com.example.dlmsconfigurator
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -26,6 +28,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -49,11 +55,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.dlmsconfigurator.core.data.DataRepository
 import com.example.dlmsconfigurator.core.dlms.DlmsProfileControls
+import com.example.dlmsconfigurator.core.dlms.DlmsProfileReadMode
+import com.example.dlmsconfigurator.core.dlms.DlmsProfileReadRequest
 import com.example.dlmsconfigurator.core.dlms.DlmsProfileTable
 import com.example.dlmsconfigurator.core.dlms.DlmsVisualKind
 import com.example.dlmsconfigurator.core.dlms.DlmsVisualRow
@@ -91,13 +100,13 @@ fun ObjectDetailScreen(
         objectName = obj?.className?.ifBlank { "Class $classId Object" } ?: "Class $classId Object"
     }
 
-    fun loadSmartView() {
+    fun loadSmartView(profileReadRequest: DlmsProfileReadRequest = DlmsProfileReadRequest()) {
         val activeEngine = sessionViewModel.activeEngine ?: return
         isLoadingSmartView = true
         smartError = null
         scope.launch(Dispatchers.IO) {
             try {
-                val snapshot = activeEngine.readObjectSnapshot(classId, obisCode)
+                val snapshot = activeEngine.readObjectSnapshot(classId, obisCode, profileReadRequest)
                 withContext(Dispatchers.Main) {
                     smartSnapshot = snapshot
                     smartError = null
@@ -183,7 +192,8 @@ fun ObjectDetailScreen(
                 connected = isConnected,
                 classId = classId,
                 obisCode = obisCode,
-                onRefresh = { loadSmartView() }
+                onRefresh = { loadSmartView() },
+                onProfileRead = { loadSmartView(it) }
             )
             Spacer(Modifier.height(16.dp))
         }
@@ -198,7 +208,8 @@ private fun SmartObjectView(
     connected: Boolean,
     classId: Int,
     obisCode: String,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onProfileRead: (DlmsProfileReadRequest) -> Unit
 ) {
     val accentBlue = Color(0xFF006C6F)
     if (classId == 7) {
@@ -208,7 +219,7 @@ private fun SmartObjectView(
             loading = loading,
             connected = connected,
             obisCode = obisCode,
-            onRead = onRefresh
+            onRead = onProfileRead
         )
         return
     }
@@ -260,7 +271,7 @@ private fun ProfileGenericWindow(
     loading: Boolean,
     connected: Boolean,
     obisCode: String,
-    onRead: () -> Unit
+    onRead: (DlmsProfileReadRequest) -> Unit
 ) {
     val accentBlue = Color(0xFF006C6F)
     val controls = snapshot?.profileControls ?: DlmsProfileControls(
@@ -272,6 +283,31 @@ private fun ProfileGenericWindow(
         sortObject = ""
     )
     var selectedTab by remember { mutableIntStateOf(0) }
+    var readMode by remember { mutableStateOf(DlmsProfileReadMode.ALL) }
+    var startEntry by remember { mutableStateOf("1") }
+    var entryCount by remember { mutableStateOf("20") }
+    var lastDays by remember { mutableStateOf("1") }
+    var fromDateTime by remember { mutableStateOf("") }
+    var toDateTime by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+    fun buildReadRequest(): DlmsProfileReadRequest? {
+        val start = startEntry.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val count = entryCount.toIntOrNull()?.coerceAtLeast(1) ?: 20
+        val days = lastDays.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        if (readMode == DlmsProfileReadMode.RANGE && (fromDateTime.isBlank() || toDateTime.isBlank())) {
+            validationError = "From and To are required for range read"
+            return null
+        }
+        validationError = null
+        return DlmsProfileReadRequest(
+            mode = readMode,
+            startEntry = start,
+            entryCount = count,
+            lastDays = days,
+            fromDateTime = fromDateTime,
+            toDateTime = toDateTime
+        )
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -284,10 +320,25 @@ private fun ProfileGenericWindow(
                 controls = controls,
                 loading = loading,
                 connected = connected,
-                onRead = onRead
+                readMode = readMode,
+                onReadModeChange = { readMode = it },
+                startEntry = startEntry,
+                onStartEntryChange = { startEntry = it.filter(Char::isDigit) },
+                entryCount = entryCount,
+                onEntryCountChange = { entryCount = it.filter(Char::isDigit) },
+                lastDays = lastDays,
+                onLastDaysChange = { lastDays = it.filter(Char::isDigit) },
+                fromDateTime = fromDateTime,
+                onFromDateTimeChange = { fromDateTime = it },
+                toDateTime = toDateTime,
+                onToDateTimeChange = { toDateTime = it },
+                onRead = {
+                    buildReadRequest()?.let(onRead)
+                }
             )
 
             when {
+                validationError != null -> ResultBlock("Profile Generic Error", validationError ?: "", Color(0xFFD71920))
                 error != null -> ResultBlock("Profile Generic Error", error, Color(0xFFD71920))
                 !connected -> Text("Connect to read profile metadata and buffer rows.", color = Color(0xFF7A8F91), fontSize = 12.sp)
                 loading -> Text("Reading profile generic attributes...", color = Color(0xFF5E7375), fontSize = 12.sp)
@@ -342,6 +393,18 @@ private fun ProfileGenericPanel(
     controls: DlmsProfileControls,
     loading: Boolean,
     connected: Boolean,
+    readMode: DlmsProfileReadMode,
+    onReadModeChange: (DlmsProfileReadMode) -> Unit,
+    startEntry: String,
+    onStartEntryChange: (String) -> Unit,
+    entryCount: String,
+    onEntryCountChange: (String) -> Unit,
+    lastDays: String,
+    onLastDaysChange: (String) -> Unit,
+    fromDateTime: String,
+    onFromDateTimeChange: (String) -> Unit,
+    toDateTime: String,
+    onToDateTimeChange: (String) -> Unit,
     onRead: () -> Unit
 ) {
     val accentBlue = Color(0xFF006C6F)
@@ -376,34 +439,82 @@ private fun ProfileGenericPanel(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                ProfileOptionRow("Read", selected = false, modifier = Modifier.weight(1f), trailing = {
-                    ProfileInlineField("1", Modifier.width(56.dp))
-                })
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(126.dp)) {
-                    Text("Count:", color = Color(0xFF0F2527), fontSize = 11.sp)
-                    Spacer(Modifier.width(6.dp))
-                    ProfileInlineField("20", Modifier.weight(1f))
+                ProfileOptionRow(
+                    label = "Read",
+                    selected = readMode == DlmsProfileReadMode.ENTRY,
+                    modifier = Modifier.weight(1f),
+                    onSelect = { onReadModeChange(DlmsProfileReadMode.ENTRY) },
+                    trailing = {
+                        ProfileInputField(
+                            value = startEntry,
+                            onValueChange = onStartEntryChange,
+                            modifier = Modifier.width(62.dp),
+                            enabled = readMode == DlmsProfileReadMode.ENTRY,
+                            numeric = true
+                        )
+                    }
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(132.dp)) {
+                    Text("Count", color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    ProfileInputField(
+                        value = entryCount,
+                        onValueChange = onEntryCountChange,
+                        modifier = Modifier.weight(1f),
+                        enabled = readMode == DlmsProfileReadMode.ENTRY,
+                        numeric = true
+                    )
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                ProfileOptionRow("Read last", selected = false, modifier = Modifier.weight(1f), trailing = {
-                    ProfileInlineField("0", Modifier.width(56.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Days", color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(34.dp))
-                })
-                ProfileOptionRow("All", selected = true, modifier = Modifier.width(126.dp))
+                ProfileOptionRow(
+                    label = "Read last",
+                    selected = readMode == DlmsProfileReadMode.LAST_DAYS,
+                    modifier = Modifier.weight(1f),
+                    onSelect = { onReadModeChange(DlmsProfileReadMode.LAST_DAYS) },
+                    trailing = {
+                        ProfileInputField(
+                            value = lastDays,
+                            onValueChange = onLastDaysChange,
+                            modifier = Modifier.width(62.dp),
+                            enabled = readMode == DlmsProfileReadMode.LAST_DAYS,
+                            numeric = true
+                        )
+                        Text("Days", color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(36.dp))
+                    }
+                )
+                ProfileOptionRow(
+                    label = "All",
+                    selected = readMode == DlmsProfileReadMode.ALL,
+                    modifier = Modifier.width(132.dp),
+                    onSelect = { onReadModeChange(DlmsProfileReadMode.ALL) }
+                )
             }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                ProfileRadioDot(selected = false)
-                Spacer(Modifier.width(8.dp))
-                Text("Read From", color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(62.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    ProfileInlineField("", Modifier.weight(1f), enabled = false)
-                    Spacer(Modifier.width(6.dp))
-                    Text("To", color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    ProfileInlineField("", Modifier.weight(1f), enabled = false)
-                }
+                ProfileOptionRow(
+                    label = "Read From",
+                    selected = readMode == DlmsProfileReadMode.RANGE,
+                    modifier = Modifier.width(104.dp),
+                    onSelect = { onReadModeChange(DlmsProfileReadMode.RANGE) }
+                )
+                ProfileInputField(
+                    value = fromDateTime,
+                    onValueChange = onFromDateTimeChange,
+                    modifier = Modifier.weight(1f),
+                    enabled = readMode == DlmsProfileReadMode.RANGE,
+                    numeric = false,
+                    placeholder = "yyyy-MM-dd HH:mm"
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("To", color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(16.dp))
+                Spacer(Modifier.width(6.dp))
+                ProfileInputField(
+                    value = toDateTime,
+                    onValueChange = onToDateTimeChange,
+                    modifier = Modifier.weight(1f),
+                    enabled = readMode == DlmsProfileReadMode.RANGE,
+                    numeric = false,
+                    placeholder = "yyyy-MM-dd HH:mm"
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -426,43 +537,65 @@ private fun ProfileOptionRow(
     label: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    onSelect: () -> Unit,
     trailing: @Composable (() -> Unit)? = null
 ) {
     Row(
-        modifier = modifier,
+        modifier = modifier.clickable(onClick = onSelect),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        ProfileRadioDot(selected)
+        RadioButton(
+            selected = selected,
+            onClick = onSelect,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = Color(0xFF006C6F),
+                unselectedColor = Color(0xFF9AA8AA)
+            ),
+            modifier = Modifier.size(24.dp)
+        )
         Text(label, color = Color(0xFF0F2527), fontSize = 11.sp, modifier = Modifier.width(62.dp))
         trailing?.invoke()
     }
 }
 
 @Composable
-private fun ProfileRadioDot(selected: Boolean) {
-    Box(
-        modifier = Modifier
-            .size(13.dp)
-            .background(if (selected) Color(0xFF006C6F) else Color.White, RoundedCornerShape(7.dp)),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selected) {
-            Box(Modifier.size(5.dp).background(Color.White, RoundedCornerShape(3.dp)))
-        }
-    }
-}
-
-@Composable
-private fun ProfileInlineField(value: String, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Text(
-        value.ifBlank { " " },
-        color = if (enabled) Color(0xFF0F2527) else Color(0xFF9AA8AA),
-        fontSize = 11.sp,
-        fontFamily = FontFamily.Monospace,
-        modifier = modifier
-            .background(if (enabled) Color(0xFFF9FAFA) else Color(0xFFE9EDED), RoundedCornerShape(4.dp))
-            .padding(horizontal = 8.dp, vertical = 6.dp)
+private fun ProfileInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    numeric: Boolean,
+    placeholder: String = ""
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        singleLine = true,
+        placeholder = {
+            if (placeholder.isNotBlank()) {
+                Text(placeholder, color = Color(0xFF9AA8AA), fontSize = 10.sp)
+            }
+        },
+        textStyle = androidx.compose.ui.text.TextStyle(
+            color = Color(0xFF0F2527),
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace
+        ),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text
+        ),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Color(0xFF006C6F),
+            unfocusedBorderColor = Color(0xFFD7E1E2),
+            disabledBorderColor = Color(0xFFE2EAEA),
+            focusedContainerColor = Color.White,
+            unfocusedContainerColor = Color.White,
+            disabledContainerColor = Color(0xFFEFF3F3),
+            cursorColor = Color(0xFF006C6F)
+        ),
+        modifier = modifier.height(42.dp)
     )
 }
 

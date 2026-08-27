@@ -6,6 +6,7 @@ import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 
 class TcpTransport(
     private val host: String,
@@ -14,6 +15,7 @@ class TcpTransport(
     private var socket: Socket? = null
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
+    private var pendingInput = ByteArray(0)
 
     override fun open() {
         if (socket != null) return
@@ -58,6 +60,7 @@ class TcpTransport(
         outputStream = null
         try { socket?.close() } catch (ignored: Exception) {}
         socket = null
+        pendingInput = ByteArray(0)
     }
 
     override fun isOpen(): Boolean {
@@ -73,22 +76,50 @@ class TcpTransport(
     override fun read(buffer: ByteArray, timeoutMs: Int): Int {
         val stream = inputStream ?: throw IOException("Socket not open")
         val sock = socket ?: throw IOException("Socket not open")
-        sock.soTimeout = timeoutMs
-        val count = stream.read(buffer)
-        if (count == -1) {
-            throw IOException("Socket stream closed")
+        if (pendingInput.isNotEmpty()) {
+            return copyFromPending(buffer)
         }
-        return count
+        sock.soTimeout = timeoutMs.coerceIn(25, 500)
+        val firstCount = try {
+            stream.read(buffer)
+        } catch (_: SocketTimeoutException) {
+            return 0
+        }
+        if (firstCount == -1) throw IOException("Socket stream closed")
+        if (firstCount <= 0) return 0
+
+        var total = firstCount
+        while (stream.available() > 0 && total < buffer.size) {
+            val room = buffer.size - total
+            val count = stream.read(buffer, total, room)
+            if (count <= 0) break
+            total += count
+        }
+        while (stream.available() > 0) {
+            val extra = ByteArray(stream.available().coerceAtMost(8192))
+            val count = stream.read(extra)
+            if (count <= 0) break
+            pendingInput += extra.copyOf(count)
+        }
+        return total
     }
 
     override fun flush() {
         val stream = inputStream ?: return
         try {
+            pendingInput = ByteArray(0)
             val available = stream.available()
             if (available > 0) {
                 val skipBuffer = ByteArray(available)
                 stream.read(skipBuffer)
             }
         } catch (ignored: Exception) {}
+    }
+
+    private fun copyFromPending(buffer: ByteArray): Int {
+        val count = pendingInput.size.coerceAtMost(buffer.size)
+        pendingInput.copyInto(buffer, endIndex = count)
+        pendingInput = pendingInput.copyOfRange(count, pendingInput.size)
+        return count
     }
 }

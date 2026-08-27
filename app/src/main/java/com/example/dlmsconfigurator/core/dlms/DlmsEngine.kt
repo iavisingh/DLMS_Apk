@@ -17,6 +17,7 @@ import gurux.dlms.enums.ObjectType
 import gurux.dlms.enums.Security
 import gurux.dlms.objects.GXDLMSAssociationLogicalName
 import gurux.dlms.objects.GXDLMSObject
+import gurux.dlms.objects.GXDLMSProfileGeneric
 import gurux.dlms.objects.enums.SecuritySuite
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -471,7 +472,11 @@ class DlmsEngine(
         else -> "Class $classId"
     }
 
-    fun readObjectSnapshot(classId: Int, obisCode: String): DlmsVisualSnapshot = operationLock.withLock {
+    fun readObjectSnapshot(
+        classId: Int,
+        obisCode: String,
+        profileReadRequest: DlmsProfileReadRequest = DlmsProfileReadRequest()
+    ): DlmsVisualSnapshot = operationLock.withLock {
         transport.flush()
         val title = resolveObisDisplayName(obisCode, classId) ?: resolveClassName(classId)
         val sections = mutableListOf<DlmsVisualSection>()
@@ -535,7 +540,6 @@ class DlmsEngine(
                 )
             }
             7 -> {
-                val bufferResult = safeReadAttribute(classId, obisCode, 2)
                 val captureObjects = safeReadAttribute(classId, obisCode, 3).getOrNull()
                 val capturePeriod = safeReadAttribute(classId, obisCode, 4).getOrNull()
                 val sortMethod = safeReadAttribute(classId, obisCode, 5).getOrNull()
@@ -543,6 +547,7 @@ class DlmsEngine(
                 val entriesInUse = safeReadAttribute(classId, obisCode, 7).getOrNull()
                 val profileEntries = safeReadAttribute(classId, obisCode, 8).getOrNull()
                 val captureColumns = captureObjectsToColumns(captureObjects)
+                val bufferResult = safeReadProfileBuffer(obisCode, profileReadRequest)
                 profileControls = DlmsProfileControls(
                     logicalName = obisCode,
                     capturePeriod = formatValue(capturePeriod),
@@ -655,6 +660,60 @@ class DlmsEngine(
             client.updateValue(cosemObj, attribute, reply.value)
         } catch (ignored: Exception) {}
         return reply.value
+    }
+
+    private fun safeReadProfileBuffer(obisCode: String, request: DlmsProfileReadRequest): Result<Any?> {
+        return try {
+            Result.success(readProfileBuffer(obisCode, request))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun readProfileBuffer(obisCode: String, request: DlmsProfileReadRequest): Any? {
+        val profile = GXDLMSProfileGeneric(obisCode)
+        val requestBytesList = when (request.mode) {
+            DlmsProfileReadMode.ENTRY -> client.readRowsByEntry(
+                profile,
+                request.startEntry.coerceAtLeast(1),
+                request.entryCount.coerceAtLeast(1)
+            )
+            DlmsProfileReadMode.LAST_DAYS -> {
+                val now = Date()
+                val from = Calendar.getInstance().apply {
+                    time = now
+                    add(Calendar.DAY_OF_YEAR, -request.lastDays.coerceAtLeast(1))
+                }.time
+                client.readRowsByRange(profile, from, now)
+            }
+            DlmsProfileReadMode.RANGE -> client.readRowsByRange(
+                profile,
+                parseProfileDate(request.fromDateTime, "From"),
+                parseProfileDate(request.toDateTime, "To")
+            )
+            DlmsProfileReadMode.ALL -> client.read(profile, 2)
+        }
+        val reply = GXReplyData()
+        readDataBlock(client, requestBytesList, reply)
+        try {
+            client.updateValue(profile, 2, reply.value)
+        } catch (ignored: Exception) {}
+        return reply.value
+    }
+
+    private fun parseProfileDate(value: String, label: String): Date {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) {
+            throw IllegalArgumentException("$label date/time is required")
+        }
+        val patterns = listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy HH:mm")
+        for (pattern in patterns) {
+            try {
+                val parser = SimpleDateFormat(pattern, Locale.US).apply { isLenient = false }
+                return parser.parse(trimmed) ?: continue
+            } catch (ignored: Exception) {}
+        }
+        throw IllegalArgumentException("$label date/time must be yyyy-MM-dd HH:mm or dd-MM-yyyy HH:mm")
     }
 
     private fun readScalerUnit(classId: Int, obisCode: String, attribute: Int): ScalerUnit? {

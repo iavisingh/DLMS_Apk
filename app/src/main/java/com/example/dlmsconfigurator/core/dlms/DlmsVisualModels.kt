@@ -37,6 +37,22 @@ data class DlmsProfileControls(
     val sortObject: String
 )
 
+data class DlmsProfileReadRequest(
+    val mode: DlmsProfileReadMode = DlmsProfileReadMode.ALL,
+    val startEntry: Int = 1,
+    val entryCount: Int = 20,
+    val lastDays: Int = 1,
+    val fromDateTime: String = "",
+    val toDateTime: String = ""
+)
+
+enum class DlmsProfileReadMode {
+    ENTRY,
+    LAST_DAYS,
+    RANGE,
+    ALL
+}
+
 enum class DlmsVisualKind {
     BOOLEAN,
     NUMBER,
