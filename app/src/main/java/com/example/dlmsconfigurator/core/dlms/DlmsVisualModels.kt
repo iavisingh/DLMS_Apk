@@ -20,7 +20,8 @@ data class DlmsVisualRow(
     val label: String,
     val value: String,
     val kind: DlmsVisualKind = DlmsVisualKind.TEXT,
-    val raw: String? = null
+    val raw: String? = null,
+    val attribute: Int? = null
 )
 
 data class DlmsProfileTable(

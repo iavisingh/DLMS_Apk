@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -60,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.dlmsconfigurator.core.data.DataRepository
+import com.example.dlmsconfigurator.core.data.OperationItem
 import com.example.dlmsconfigurator.core.dlms.DlmsProfileControls
 import com.example.dlmsconfigurator.core.dlms.DlmsProfileReadMode
 import com.example.dlmsconfigurator.core.dlms.DlmsProfileReadRequest
@@ -70,9 +72,14 @@ import com.example.dlmsconfigurator.core.dlms.DlmsVisualSection
 import com.example.dlmsconfigurator.core.dlms.DlmsVisualSnapshot
 import com.example.dlmsconfigurator.ui.ConnectionState
 import com.example.dlmsconfigurator.ui.DeviceSessionViewModel
+import com.example.dlmsconfigurator.ui.RawTrafficEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,6 +93,7 @@ fun ObjectDetailScreen(
 ) {
     val scope = rememberCoroutineScope()
     val connectionState by sessionViewModel.connectionState.collectAsState()
+    val rawTrafficLog by sessionViewModel.rawTrafficLog.collectAsState()
     val engine = sessionViewModel.activeEngine
     val isConnected = connectionState is ConnectionState.Connected && engine != null
 
@@ -94,10 +102,16 @@ fun ObjectDetailScreen(
     var smartSnapshot by remember { mutableStateOf<DlmsVisualSnapshot?>(null) }
     var smartError by remember { mutableStateOf<String?>(null) }
     var isLoadingSmartView by remember { mutableStateOf(false) }
+    var attrAccessJson by remember { mutableStateOf("{}") }
+    var writeTarget by remember { mutableStateOf<DlmsVisualRow?>(null) }
+    var writeValue by remember { mutableStateOf("") }
+    var writeError by remember { mutableStateOf<String?>(null) }
+    var isWriting by remember { mutableStateOf(false) }
 
     LaunchedEffect(deviceId, obisCode) {
         val obj = repository.getAssociationObjects(deviceId).find { it.obisCode == obisCode }
         objectName = obj?.className?.ifBlank { "Class $classId Object" } ?: "Class $classId Object"
+        attrAccessJson = obj?.attrAccessJson ?: "{}"
     }
 
     fun loadSmartView(profileReadRequest: DlmsProfileReadRequest = DlmsProfileReadRequest()) {
@@ -150,53 +164,138 @@ fun ObjectDetailScreen(
         containerColor = Color(0xFFF4F7F7)
     ) { innerPadding ->
         val pageScrollState = rememberScrollState()
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(pageScrollState)
         ) {
-            // Object Info bar
-            Card(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                shape = RoundedCornerShape(8.dp)
+                    .fillMaxSize()
+                    .verticalScroll(pageScrollState)
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Object Info bar
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFFDDEDEE), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Class $classId", color = accentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFDDEDEE), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Text("Class $classId", color = accentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = if (isConnected) "● Connected" else "● Not connected",
+                            color = if (isConnected) Color(0xFF238B45) else Color(0xFFD71920),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = if (isConnected) "● Connected" else "● Not connected",
-                        color = if (isConnected) Color(0xFF238B45) else Color(0xFFD71920),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                }
+
+                SmartObjectView(
+                    snapshot = smartSnapshot,
+                    error = smartError,
+                    loading = isLoadingSmartView,
+                    connected = isConnected,
+                    classId = classId,
+                    obisCode = obisCode,
+                    attrAccessJson = attrAccessJson,
+                    onWriteRequest = { row ->
+                        writeTarget = row
+                        writeValue = row.raw ?: row.value
+                        writeError = null
+                    },
+                    onRefresh = { loadSmartView() },
+                    onProfileRead = { loadSmartView(it) }
+                )
+                Spacer(Modifier.height(92.dp))
+            }
+            RawTrafficFloatingBar(
+                latest = rawTrafficLog.lastOrNull(),
+                count = rawTrafficLog.size,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+        }
+    }
+
+    writeTarget?.let { row ->
+        AlertDialog(
+            onDismissRequest = { if (!isWriting) writeTarget = null },
+            containerColor = Color.White,
+            title = { Text("Write ${row.label}", color = Color(0xFF0F2527), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Attribute ${row.attribute ?: "-"}", color = Color(0xFF5E7375), fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = writeValue,
+                        onValueChange = { writeValue = it },
+                        enabled = !isWriting,
+                        singleLine = false,
+                        colors = profileTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth()
                     )
+                    writeError?.let { Text(it, color = Color(0xFFD71920), fontSize = 12.sp) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isWriting && row.attribute != null,
+                    colors = ButtonDefaults.buttonColors(containerColor = accentBlue),
+                    onClick = {
+                        val activeEngine = sessionViewModel.activeEngine ?: return@Button
+                        val attribute = row.attribute ?: return@Button
+                        isWriting = true
+                        writeError = null
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val op = OperationItem(
+                                    type = "set",
+                                    obis = obisCode,
+                                    classId = classId,
+                                    attribute = attribute,
+                                    value = parseWriteValue(writeValue),
+                                    name = objectName
+                                )
+                                activeEngine.executeSet(op) { _, _ -> }
+                                withContext(Dispatchers.Main) {
+                                    writeTarget = null
+                                    loadSmartView()
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    writeError = e.message ?: "Write failed"
+                                }
+                            } finally {
+                                withContext(Dispatchers.Main) {
+                                    isWriting = false
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    if (isWriting) CircularProgressIndicator(Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("Write")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!isWriting) writeTarget = null }) {
+                    Text("Cancel", color = Color(0xFF5E7375))
                 }
             }
-
-            SmartObjectView(
-                snapshot = smartSnapshot,
-                error = smartError,
-                loading = isLoadingSmartView,
-                connected = isConnected,
-                classId = classId,
-                obisCode = obisCode,
-                onRefresh = { loadSmartView() },
-                onProfileRead = { loadSmartView(it) }
-            )
-            Spacer(Modifier.height(16.dp))
-        }
+        )
     }
 }
 
@@ -208,6 +307,8 @@ private fun SmartObjectView(
     connected: Boolean,
     classId: Int,
     obisCode: String,
+    attrAccessJson: String,
+    onWriteRequest: (DlmsVisualRow) -> Unit,
     onRefresh: () -> Unit,
     onProfileRead: (DlmsProfileReadRequest) -> Unit
 ) {
@@ -257,7 +358,13 @@ private fun SmartObjectView(
                 !connected -> Text("Connect to read class-specific attributes.", color = Color(0xFF7A8F91), fontSize = 12.sp)
                 snapshot == null -> Text("Click Read to load class-specific attributes.", color = Color(0xFF7A8F91), fontSize = 12.sp)
                 else -> {
-                    snapshot.sections.forEach { section -> VisualSectionCard(section) }
+                    snapshot.sections.forEach { section ->
+                        VisualSectionCard(
+                            section = section,
+                            attrAccessJson = attrAccessJson,
+                            onWriteRequest = onWriteRequest
+                        )
+                    }
                 }
             }
         }
@@ -586,18 +693,21 @@ private fun ProfileInputField(
         keyboardOptions = KeyboardOptions(
             keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text
         ),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color(0xFF006C6F),
-            unfocusedBorderColor = Color(0xFFD7E1E2),
-            disabledBorderColor = Color(0xFFE2EAEA),
-            focusedContainerColor = Color.White,
-            unfocusedContainerColor = Color.White,
-            disabledContainerColor = Color(0xFFEFF3F3),
-            cursorColor = Color(0xFF006C6F)
-        ),
-        modifier = modifier.height(42.dp)
+        colors = profileTextFieldColors(),
+        modifier = modifier.height(54.dp)
     )
 }
+
+@Composable
+private fun profileTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = Color(0xFF006C6F),
+    unfocusedBorderColor = Color(0xFFD7E1E2),
+    disabledBorderColor = Color(0xFFE2EAEA),
+    focusedContainerColor = Color.White,
+    unfocusedContainerColor = Color.White,
+    disabledContainerColor = Color(0xFFEFF3F3),
+    cursorColor = Color(0xFF006C6F)
+)
 
 @Composable
 private fun ProfileField(label: String, value: String, modifier: Modifier = Modifier) {
@@ -618,15 +728,29 @@ private fun ProfileField(label: String, value: String, modifier: Modifier = Modi
 }
 
 @Composable
-private fun VisualSectionCard(section: DlmsVisualSection) {
+private fun VisualSectionCard(
+    section: DlmsVisualSection,
+    attrAccessJson: String,
+    onWriteRequest: (DlmsVisualRow) -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(section.title, color = Color(0xFF006C6F), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        section.rows.forEach { row -> VisualRow(row) }
+        section.rows.forEach { row ->
+            VisualRow(
+                row = row,
+                writable = row.attribute?.let { isAttributeWritable(attrAccessJson, it) } == true,
+                onWriteRequest = onWriteRequest
+            )
+        }
     }
 }
 
 @Composable
-private fun VisualRow(row: DlmsVisualRow) {
+private fun VisualRow(
+    row: DlmsVisualRow,
+    writable: Boolean,
+    onWriteRequest: (DlmsVisualRow) -> Unit
+) {
     val valueColor = when (row.kind) {
         DlmsVisualKind.ERROR -> Color(0xFFD71920)
         DlmsVisualKind.BOOLEAN -> if (row.value.equals("true", ignoreCase = true)) Color(0xFF238B45) else Color(0xFFB7791F)
@@ -643,15 +767,22 @@ private fun VisualRow(row: DlmsVisualRow) {
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Text(row.label, color = Color(0xFF5E7375), fontSize = 11.sp, modifier = Modifier.weight(0.42f))
-            Text(
-                row.value,
-                color = valueColor,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                fontFamily = if (row.kind == DlmsVisualKind.HEX || row.kind == DlmsVisualKind.STRUCTURE) FontFamily.Monospace else FontFamily.Default,
-                fontWeight = if (row.kind == DlmsVisualKind.NUMBER) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.weight(0.58f)
-            )
+            Column(modifier = Modifier.weight(0.58f)) {
+                Text(
+                    row.value,
+                    color = valueColor,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    fontFamily = if (row.kind == DlmsVisualKind.HEX || row.kind == DlmsVisualKind.STRUCTURE) FontFamily.Monospace else FontFamily.Default,
+                    fontWeight = if (row.kind == DlmsVisualKind.NUMBER) FontWeight.SemiBold else FontWeight.Normal
+                )
+                if (writable) {
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(onClick = { onWriteRequest(row) }) {
+                        Text("Write back", color = Color(0xFF006C6F), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
         }
         if (row.raw != null && row.raw != row.value) {
             Spacer(Modifier.height(4.dp))
@@ -677,8 +808,26 @@ private fun ProfileEmptyTable(message: String) {
 
 @Composable
 private fun ProfileTable(title: String, table: DlmsProfileTable, maxRows: Int) {
+    var page by remember(table) { mutableIntStateOf(0) }
+    val rowsPerPage = maxRows.coerceAtLeast(20)
+    val pageCount = ((table.rows.size + rowsPerPage - 1) / rowsPerPage).coerceAtLeast(1)
+    if (page >= pageCount) page = pageCount - 1
+    val fromIndex = (page * rowsPerPage).coerceAtMost(table.rows.size)
+    val toIndex = (fromIndex + rowsPerPage).coerceAtMost(table.rows.size)
+    val visibleRows = table.rows.subList(fromIndex, toIndex)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, color = Color(0xFF006C6F), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = Color(0xFF006C6F), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            if (table.rows.size > rowsPerPage) {
+                TextButton(onClick = { page = (page - 1).coerceAtLeast(0) }, enabled = page > 0) {
+                    Text("Prev", fontSize = 11.sp)
+                }
+                Text("${fromIndex + 1}-$toIndex / ${table.rows.size}", color = Color(0xFF5E7375), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                TextButton(onClick = { page = (page + 1).coerceAtMost(pageCount - 1) }, enabled = page < pageCount - 1) {
+                    Text("Next", fontSize = 11.sp)
+                }
+            }
+        }
         val horizontalState = rememberScrollState()
         Column(
             modifier = Modifier
@@ -689,9 +838,9 @@ private fun ProfileTable(title: String, table: DlmsProfileTable, maxRows: Int) {
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             ProfileTableRow(table.columns, header = true, dataTable = title == "Data")
-            table.rows.take(maxRows).forEach { row -> ProfileTableRow(row, header = false, dataTable = title == "Data") }
-            if (table.rows.size > maxRows) {
-                Text("${table.rows.size - maxRows} more rows hidden", color = Color(0xFF7A8F91), fontSize = 10.sp)
+            visibleRows.forEach { row -> ProfileTableRow(row, header = false, dataTable = title == "Data") }
+            if (table.rows.isEmpty()) {
+                Text("No rows returned", color = Color(0xFF7A8F91), fontSize = 11.sp, modifier = Modifier.padding(8.dp))
             }
             Spacer(Modifier.height(52.dp).fillMaxWidth().background(Color(0xFFB8B8B8)))
         }
@@ -734,6 +883,60 @@ private fun classVisualizationLabel(classId: Int): String = when (classId) {
     8 -> "Clock: time, timezone and daylight-saving attributes"
     29, 40 -> "Push Setup: object list, destination, communication window and retries"
     else -> "Generic COSEM fallback"
+}
+
+@Composable
+private fun RawTrafficFloatingBar(
+    latest: RawTrafficEntry?,
+    count: Int,
+    modifier: Modifier = Modifier
+) {
+    val isTx = latest?.direction == "TX"
+    val accent = if (isTx) Color(0xFFB7791F) else Color(0xFF006C6F)
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xEEF8FBFB)),
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("RAW", color = Color(0xFF006C6F), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(8.dp))
+            Text("$count", color = Color(0xFF5E7375), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                latest?.let { "${it.direction} ${it.hex.chunked(2).take(22).joinToString(" ").uppercase()}" } ?: "No TX/RX frames yet",
+                color = if (latest == null) Color(0xFF7A8F91) else accent,
+                fontSize = 10.sp,
+                lineHeight = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 2,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+private fun isAttributeWritable(attrAccessJson: String, attribute: Int): Boolean {
+    return try {
+        val value = Json.parseToJsonElement(attrAccessJson)
+            .jsonObject[attribute.toString()]
+            ?.jsonPrimitive
+            ?.content
+            ?: return false
+        value.contains("WRITE", ignoreCase = true) || value == "2" || value == "3"
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private fun parseWriteValue(value: String): JsonPrimitive {
+    val trimmed = value.trim()
+    return trimmed.toLongOrNull()?.let { JsonPrimitive(it) }
+        ?: trimmed.toDoubleOrNull()?.let { JsonPrimitive(it) }
+        ?: JsonPrimitive(trimmed)
 }
 
 @Composable

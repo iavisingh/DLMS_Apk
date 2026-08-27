@@ -26,6 +26,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -423,9 +425,27 @@ class DlmsEngine(
                 version   = obj.version.toShort(),
                 obisCode  = logicalName,
                 className = resolveObisDisplayName(logicalName, obj.objectType.value)
-                    ?: resolveClassName(obj.objectType.value)
+                    ?: resolveClassName(obj.objectType.value),
+                attrAccessJson = encodeAttributeAccess(obj),
+                methodAccessJson = encodeMethodAccess(obj)
             )
         }
+    }
+
+    private fun encodeAttributeAccess(obj: GXDLMSObject): String {
+        return buildJsonObject {
+            for (index in 1..obj.attributeCount) {
+                runCatching { obj.getAccess(index).name }.getOrNull()?.let { put(index.toString(), it) }
+            }
+        }.toString()
+    }
+
+    private fun encodeMethodAccess(obj: GXDLMSObject): String {
+        return buildJsonObject {
+            for (index in 1..obj.methodCount) {
+                runCatching { obj.getMethodAccess(index).name }.getOrNull()?.let { put(index.toString(), it) }
+            }
+        }.toString()
     }
 
     private fun resolveClassName(classId: Int): String = when (classId) {
@@ -498,8 +518,8 @@ class DlmsEngine(
                 sections += DlmsVisualSection(
                     "Register Value",
                     listOf(
-                        visualRowFromValue("Scaled value", applyScaler(value, scalerUnit), value),
-                        visualRowFromValue("Raw value", value),
+                        visualRowFromValue("Scaled value", applyScaler(value, scalerUnit), value, attribute = 2),
+                        visualRowFromValue("Raw value", value, attribute = 2),
                         DlmsVisualRow("Scaler", scalerUnit?.scaler?.toString() ?: "Unavailable", DlmsVisualKind.NUMBER),
                         DlmsVisualRow("Unit", scalerUnit?.unitName ?: "Unavailable")
                     )
@@ -511,8 +531,8 @@ class DlmsEngine(
                 sections += DlmsVisualSection(
                     "Extended Register",
                     listOf(
-                        visualRowFromValue("Scaled value", applyScaler(value, scalerUnit), value),
-                        visualRowFromValue("Raw value", value),
+                        visualRowFromValue("Scaled value", applyScaler(value, scalerUnit), value, attribute = 2),
+                        visualRowFromValue("Raw value", value, attribute = 2),
                         DlmsVisualRow("Scaler", scalerUnit?.scaler?.toString() ?: "Unavailable", DlmsVisualKind.NUMBER),
                         DlmsVisualRow("Unit", scalerUnit?.unitName ?: "Unavailable"),
                         readVisualRow(classId, obisCode, 4, "Status"),
@@ -527,8 +547,8 @@ class DlmsEngine(
                 sections += DlmsVisualSection(
                     "Demand Register",
                     listOf(
-                        visualRowFromValue("Current average", applyScaler(currentAverage, scalerUnit), currentAverage),
-                        visualRowFromValue("Last average", applyScaler(lastAverage, scalerUnit), lastAverage),
+                        visualRowFromValue("Current average", applyScaler(currentAverage, scalerUnit), currentAverage, attribute = 2),
+                        visualRowFromValue("Last average", applyScaler(lastAverage, scalerUnit), lastAverage, attribute = 3),
                         DlmsVisualRow("Scaler", scalerUnit?.scaler?.toString() ?: "Unavailable", DlmsVisualKind.NUMBER),
                         DlmsVisualRow("Unit", scalerUnit?.unitName ?: "Unavailable"),
                         readVisualRow(classId, obisCode, 5, "Status"),
@@ -638,8 +658,8 @@ class DlmsEngine(
     private fun readVisualRow(classId: Int, obisCode: String, attribute: Int, label: String): DlmsVisualRow {
         return safeReadAttribute(classId, obisCode, attribute)
             .fold(
-                onSuccess = { visualRowFromValue(label, it) },
-                onFailure = { DlmsVisualRow(label, it.message ?: "Read failed", DlmsVisualKind.ERROR) }
+                onSuccess = { visualRowFromValue(label, it, attribute = attribute) },
+                onFailure = { DlmsVisualRow(label, it.message ?: "Read failed", DlmsVisualKind.ERROR, attribute = attribute) }
             )
     }
 
@@ -741,7 +761,7 @@ class DlmsEngine(
         }
     }
 
-    private fun visualRowFromValue(label: String, value: Any?, rawValue: Any? = null): DlmsVisualRow {
+    private fun visualRowFromValue(label: String, value: Any?, rawValue: Any? = null, attribute: Int? = null): DlmsVisualRow {
         val kind = when (value) {
             is Boolean -> DlmsVisualKind.BOOLEAN
             is Byte, is Short, is Int, is Long, is Float, is Double -> DlmsVisualKind.NUMBER
@@ -757,7 +777,8 @@ class DlmsEngine(
             label = label,
             value = formatValue(value),
             kind = kind,
-            raw = rawValue?.let { formatValue(it) }
+            raw = rawValue?.let { formatValue(it) },
+            attribute = attribute
         )
     }
 
